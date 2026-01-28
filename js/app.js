@@ -597,9 +597,12 @@ class PDFEditorApp {
                 this.currentScale
             );
 
-            // Generate filename
-            const baseName = this.fileName.replace('.pdf', '');
-            const exportName = `${baseName}-edited.pdf`;
+            // Generate filename: use loaded name if present, otherwise a unique random name
+            const baseName = (this.fileName || '').replace(/\.pdf$/i, '').trim();
+            const hasRealFilename = baseName && baseName !== 'document';
+            const exportName = hasRealFilename
+                ? `${baseName}-edited.pdf`
+                : `pdf-export-${Math.random().toString(36).slice(2, 10)}.pdf`;
 
             this.exporter.downloadPDF(modifiedPdfBytes, exportName);
             this.hideLoading();
