@@ -298,7 +298,8 @@ export class CanvasManager {
             top: y,
             selectable: true,
             _annotationType: 'textfield',
-            _fieldValue: ''
+            _fieldValue: '',
+            _fieldName: '' // Field name for bulk filling
         });
 
         canvas.add(group);
@@ -333,7 +334,8 @@ export class CanvasManager {
             top: y,
             selectable: true,
             _annotationType: 'checkbox',
-            _checked: false
+            _checked: false,
+            _fieldName: '' // Field name for bulk filling
         });
 
         // Toggle on double click
@@ -488,7 +490,7 @@ export class CanvasManager {
         const history = this.history.get(pageNum);
         if (!canvas || !history) return;
 
-        const state = JSON.stringify(canvas.toJSON(['_annotationType', '_checked', '_fieldValue', '_signatureMeta']));
+        const state = JSON.stringify(canvas.toJSON(['_annotationType', '_checked', '_fieldValue', '_fieldName', '_signatureMeta']));
         history.undoStack.push(state);
         history.redoStack = []; // Clear redo stack on new action
 
@@ -581,7 +583,7 @@ export class CanvasManager {
             canvas.forEachObject((obj) => {
                 pageAnnotations.push({
                     type: obj._annotationType || obj.type,
-                    data: obj.toJSON(['_annotationType', '_checked', '_fieldValue', '_signatureMeta']),
+                    data: obj.toJSON(['_annotationType', '_checked', '_fieldValue', '_fieldName', '_signatureMeta']),
                     object: obj
                 });
             });
@@ -603,6 +605,29 @@ export class CanvasManager {
         const deleteBtn = document.getElementById('btn-delete');
         if (deleteBtn) {
             deleteBtn.disabled = !activeObject;
+        }
+
+        // Show field name editor for form fields
+        const toolOptions = document.getElementById('tool-options');
+        if (toolOptions && activeObject) {
+            const annotationType = activeObject._annotationType;
+            if (annotationType === 'textfield' || annotationType === 'checkbox') {
+                const fieldName = activeObject._fieldName || '';
+                toolOptions.innerHTML = `
+                    <div class="tool-option">
+                        <label>Field Name:</label>
+                        <input type="text" id="field-name-input" value="${fieldName}" placeholder="e.g. tenant_name" style="min-width: 200px;">
+                        <small style="display: block; color: #6b7280; margin-top: 4px;">Used for CSV bulk filling</small>
+                    </div>
+                `;
+                const nameInput = document.getElementById('field-name-input');
+                if (nameInput) {
+                    nameInput.addEventListener('input', (e) => {
+                        activeObject._fieldName = e.target.value.trim();
+                        canvas.renderAll();
+                    });
+                }
+            }
         }
     }
 

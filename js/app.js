@@ -7,6 +7,7 @@ import { CanvasManager } from './canvas-manager.js';
 import { PDFExporter } from './export.js';
 import { SignaturePad } from './signature-pad.js';
 import { emailTemplates } from './email-templates.js';
+import { BulkFillHandler } from './bulk-fill.js';
 
 function escapeHtml(s) {
     if (s == null) return '';
@@ -25,6 +26,7 @@ class PDFEditorApp {
         this.canvasManager = new CanvasManager();
         this.exporter = new PDFExporter();
         this.signaturePad = new SignaturePad();
+        this.bulkFillHandler = new BulkFillHandler();
 
         this.currentScale = 1.0;
         this.fileName = 'document.pdf';
@@ -45,6 +47,7 @@ class PDFEditorApp {
         this.setupSendModal();
         this.setupTemplatesModal();
         this.setupTemplateEditModal();
+        this.setupBulkFillModal();
     }
 
     /**
@@ -66,6 +69,7 @@ class PDFEditorApp {
         this.btnSave = document.getElementById('btn-save');
         this.btnSend = document.getElementById('btn-send');
         this.btnTemplates = document.getElementById('btn-templates');
+        this.btnBulkFill = document.getElementById('btn-bulk-fill');
         this.btnUndo = document.getElementById('btn-undo');
         this.btnRedo = document.getElementById('btn-redo');
         this.btnDelete = document.getElementById('btn-delete');
@@ -99,6 +103,7 @@ class PDFEditorApp {
         this.sendModal = document.getElementById('send-modal');
         this.templatesModal = document.getElementById('templates-modal');
         this.templateEditModal = document.getElementById('template-edit-modal');
+        this.bulkFillModal = document.getElementById('bulk-fill-modal');
     }
 
     /**
@@ -113,9 +118,10 @@ class PDFEditorApp {
         // Save/Export
         this.btnSave.addEventListener('click', () => this.exportPDF());
 
-        // Send / Templates
+        // Send / Templates / Bulk Fill
         this.btnSend?.addEventListener('click', () => this.showSendModal());
         this.btnTemplates?.addEventListener('click', () => this.showTemplatesModal());
+        this.btnBulkFill?.addEventListener('click', async () => this.showBulkFillModal());
 
         // Undo/Redo
         this.btnUndo.addEventListener('click', () => {
@@ -1068,6 +1074,226 @@ class PDFEditorApp {
         modal?.addEventListener('click', (e) => {
             if (e.target === modal) this.hideTemplateEditModal();
         });
+    }
+
+    /**
+     * Setup bulk fill modal
+     */
+    setupBulkFillModal() {
+        const modal = this.bulkFillModal;
+        const closeBtn = document.getElementById('bulk-fill-modal-close');
+        const cancelBtn = document.getElementById('bulk-fill-cancel');
+        const processBtn = document.getElementById('bulk-fill-process');
+        const templateInput = document.getElementById('bulk-fill-template');
+        const csvInput = document.getElementById('bulk-fill-csv');
+        const filenameInput = document.getElementById('bulk-fill-filename');
+        const mappingDiv = document.getElementById('bulk-fill-mapping');
+        const mappingList = document.getElementById('bulk-fill-mapping-list');
+        const progressDiv = document.getElementById('bulk-fill-progress');
+        const progressFill = document.getElementById('bulk-fill-progress-fill');
+        const progressText = document.getElementById('bulk-fill-progress-text');
+        const templateStatus = document.getElementById('bulk-fill-template-status');
+
+        let templateBytes = null;
+        let csvText = null;
+        let pdfFieldNames = [];
+        let csvHeaders = [];
+
+        closeBtn?.addEventListener('click', () => this.hideBulkFillModal());
+        cancelBtn?.addEventListener('click', () => this.hideBulkFillModal());
+
+        const arrayBufferFromUint8 = (u8) => {
+            if (!u8) return null;
+            return u8.buffer.slice(u8.byteOffset, u8.byteOffset + u8.byteLength);
+        };
+
+        const setTemplateFromBytes = async (bytes) => {
+            templateBytes = bytes;
+            pdfFieldNames = templateBytes ? await this.bulkFillHandler.extractFormFieldNames(templateBytes) : [];
+            this.updateBulkFillMapping();
+        };
+
+        templateInput?.addEventListener('change', async (e) => {
+            const file = e.target.files?.[0];
+            if (!file) return;
+
+            try {
+                await setTemplateFromBytes(await file.arrayBuffer());
+                
+                if (pdfFieldNames.length === 0) {
+                    alert('No form fields found in PDF. Make sure the PDF has form fields created with the Form Text Field or Form Checkbox tools.');
+                } else {
+                    this.updateBulkFillMapping();
+                }
+            } catch (error) {
+                console.error('Error loading template:', error);
+                alert('Error loading PDF template: ' + error.message);
+            }
+        });
+
+        csvInput?.addEventListener('change', async (e) => {
+            const file = e.target.files?.[0];
+            if (!file) return;
+
+            try {
+                csvText = await file.text();
+                const rows = this.bulkFillHandler.parseCSV(csvText);
+                if (rows.length > 0) {
+                    csvHeaders = Object.keys(rows[0]);
+                    this.updateBulkFillMapping();
+                } else {
+                    alert('CSV file appears to be empty or invalid.');
+                }
+            } catch (error) {
+                console.error('Error loading CSV:', error);
+                alert('Error loading CSV file: ' + error.message);
+            }
+        });
+
+        processBtn?.addEventListener('click', async () => {
+            if (!csvText) {
+                alert('Please upload a CSV file.');
+                return;
+            }
+
+            // If the user didn't upload a template, default to the currently open document
+            if (!templateBytes) {
+                if (this.pdfHandler.isLoaded()) {
+                    const exported = await this.getExportedPDF();
+                    if (exported?.bytes) {
+                        await setTemplateFromBytes(arrayBufferFromUint8(exported.bytes));
+                    }
+                }
+            }
+
+            if (!templateBytes) {
+                alert('No PDF template available. Open a PDF in the editor (or upload a template in this modal).');
+                return;
+            }
+
+            // Build field mapping
+            const fieldMapping = {};
+            const mappingInputs = mappingList.querySelectorAll('select');
+            mappingInputs.forEach(select => {
+                const csvColumn = select.dataset.csvColumn;
+                const pdfField = select.value;
+                if (pdfField && pdfField !== '') {
+                    fieldMapping[csvColumn] = pdfField;
+                }
+            });
+
+            const filenameTemplate = filenameInput?.value || 'document-{{row}}.pdf';
+
+            // Show progress
+            progressDiv.classList.remove('hidden');
+            processBtn.disabled = true;
+            cancelBtn.disabled = true;
+
+            try {
+                await this.bulkFillHandler.processBulkFill(
+                    templateBytes,
+                    csvText,
+                    fieldMapping,
+                    filenameTemplate,
+                    (current, total) => {
+                        const percent = Math.round((current / total) * 100);
+                        progressFill.style.width = percent + '%';
+                        progressText.textContent = `Processing ${current} of ${total}...`;
+                    }
+                );
+
+                progressText.textContent = `Completed! ${csvHeaders.length > 0 ? this.bulkFillHandler.parseCSV(csvText).length : 0} PDFs downloaded.`;
+                setTimeout(() => {
+                    this.hideBulkFillModal();
+                }, 2000);
+            } catch (error) {
+                console.error('Bulk fill error:', error);
+                alert('Error processing bulk fill: ' + error.message);
+                progressDiv.classList.add('hidden');
+                processBtn.disabled = false;
+                cancelBtn.disabled = false;
+            }
+        });
+
+        modal?.addEventListener('click', (e) => {
+            if (e.target === modal) this.hideBulkFillModal();
+        });
+
+        // Update mapping when fields are available
+        this.updateBulkFillMapping = () => {
+            if (pdfFieldNames.length === 0 || csvHeaders.length === 0) {
+                mappingDiv.classList.add('hidden');
+                processBtn.disabled = true;
+                return;
+            }
+
+            mappingDiv.classList.remove('hidden');
+            mappingList.innerHTML = '';
+
+            csvHeaders.forEach(csvHeader => {
+                const row = document.createElement('div');
+                row.className = 'bulk-fill-mapping-row';
+                row.innerHTML = `
+                    <label>${escapeHtml(csvHeader)}</label>
+                    <select class="bulk-fill-mapping-select" data-csv-column="${escapeHtml(csvHeader)}">
+                        <option value="">-- Skip --</option>
+                        ${pdfFieldNames.map(fieldName => 
+                            `<option value="${escapeHtml(fieldName)}" ${csvHeader.toLowerCase() === fieldName.toLowerCase() ? 'selected' : ''}>${escapeHtml(fieldName)}</option>`
+                        ).join('')}
+                    </select>
+                `;
+                mappingList.appendChild(row);
+            });
+
+            processBtn.disabled = false;
+        };
+
+        // Expose minimal internals so showBulkFillModal() can set default template.
+        this._bulkFillModalInternal = {
+            reset: () => {
+                templateBytes = null;
+                csvText = null;
+                pdfFieldNames = [];
+                csvHeaders = [];
+                if (templateStatus) templateStatus.textContent = '';
+            },
+            setTemplateFromOpenDoc: async () => {
+                if (!this.pdfHandler.isLoaded()) {
+                    if (templateStatus) templateStatus.textContent = 'No document open — upload a PDF template above.';
+                    return;
+                }
+                if (templateStatus) templateStatus.textContent = 'Using the currently open document as the template.';
+                const exported = await this.getExportedPDF();
+                if (exported?.bytes) {
+                    await setTemplateFromBytes(arrayBufferFromUint8(exported.bytes));
+                }
+            }
+        };
+    }
+
+    async showBulkFillModal() {
+        // Reset form
+        document.getElementById('bulk-fill-template').value = '';
+        document.getElementById('bulk-fill-csv').value = '';
+        document.getElementById('bulk-fill-filename').value = 'document-{{row}}.pdf';
+        document.getElementById('bulk-fill-mapping').classList.add('hidden');
+        document.getElementById('bulk-fill-progress').classList.add('hidden');
+        document.getElementById('bulk-fill-process').disabled = true;
+        document.getElementById('bulk-fill-cancel').disabled = false;
+        
+        this.bulkFillModal.classList.remove('hidden');
+
+        // Default template to the currently open/edited document.
+        try {
+            this._bulkFillModalInternal?.reset?.();
+            await this._bulkFillModalInternal?.setTemplateFromOpenDoc?.();
+        } catch (e) {
+            console.warn('Failed to set bulk-fill template from open doc:', e);
+        }
+    }
+
+    hideBulkFillModal() {
+        this.bulkFillModal.classList.add('hidden');
     }
 
     /**

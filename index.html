@@ -90,6 +90,10 @@
                     <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-5 14H7v-2h7v2zm3-4H7v-2h10v2zm0-4H7V7h10v2z"/></svg>
                     <span>Templates</span>
                 </button>
+                <button id="btn-bulk-fill" class="tool-btn" title="Bulk fill from CSV">
+                    <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg>
+                    <span>Bulk Fill</span>
+                </button>
             </div>
         </header>
 
@@ -288,6 +292,57 @@
                 <div class="modal-footer">
                     <button id="tpl-edit-cancel" class="btn btn-secondary">Cancel</button>
                     <button id="tpl-edit-save" class="btn btn-primary">Save</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Bulk Fill Modal -->
+        <div id="bulk-fill-modal" class="modal hidden">
+            <div class="modal-content modal-content--wide">
+                <div class="modal-header">
+                    <h3>Bulk Fill PDFs from CSV</h3>
+                    <button class="modal-close" id="bulk-fill-modal-close">&times;</button>
+                </div>
+                <div class="modal-body">
+                    <p class="bulk-fill-description">
+                        Bulk fill the PDF you already have open using a CSV file. Each row will generate a separate filled PDF that downloads automatically.
+                    </p>
+                    <div id="bulk-fill-template-status" class="bulk-fill-hint"></div>
+                    
+                    <div class="send-field">
+                        <label for="bulk-fill-template">PDF Template (optional override)</label>
+                        <input type="file" id="bulk-fill-template" accept=".pdf" class="send-input">
+                        <small class="bulk-fill-hint">Leave blank to use the currently open document. Upload a different PDF only if you want to override the template.</small>
+                    </div>
+
+                    <div class="send-field">
+                        <label for="bulk-fill-csv">CSV File</label>
+                        <input type="file" id="bulk-fill-csv" accept=".csv" class="send-input">
+                        <small class="bulk-fill-hint">CSV file with column headers matching PDF field names</small>
+                    </div>
+
+                    <div class="send-field">
+                        <label for="bulk-fill-filename">Filename Template</label>
+                        <input type="text" id="bulk-fill-filename" class="send-input" placeholder="contract-{{tenant_name}}.pdf" value="document-{{row}}.pdf">
+                        <small class="bulk-fill-hint">Use {{column_name}} to insert CSV column values. Default: document-{{row}}.pdf</small>
+                    </div>
+
+                    <div id="bulk-fill-mapping" class="bulk-fill-mapping hidden">
+                        <h4>Field Mapping</h4>
+                        <p class="bulk-fill-hint">Map CSV columns to PDF form fields. Leave unmapped to skip.</p>
+                        <div id="bulk-fill-mapping-list"></div>
+                    </div>
+
+                    <div id="bulk-fill-progress" class="bulk-fill-progress hidden">
+                        <div class="bulk-fill-progress-bar">
+                            <div id="bulk-fill-progress-fill" class="bulk-fill-progress-fill"></div>
+                        </div>
+                        <p id="bulk-fill-progress-text">Processing...</p>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button id="bulk-fill-cancel" class="btn btn-secondary">Cancel</button>
+                    <button id="bulk-fill-process" class="btn btn-primary" disabled>Process & Download</button>
                 </div>
             </div>
         </div>

@@ -42,20 +42,7 @@ export class PDFExporter {
             const { width: pageWidth, height: pageHeight } = page.getSize();
 
             for (const annotation of pageData.annotations) {
-                await this.drawAnnotation(pdfDoc, page, annotation, scaleFactor, pageHeight);
-
-                if (annotation.type === 'signature' && annotation.object._signatureMeta) {
-                    const meta = { ...annotation.object._signatureMeta };
-                    meta.pageNum = pageData.pageNum;
-                    const b = annotation.object.getBoundingRect();
-                    meta.bounds = {
-                        left: b.left * scaleFactor,
-                        top: pageHeight - (b.top + b.height) * scaleFactor,
-                        width: b.width * scaleFactor,
-                        height: b.height * scaleFactor
-                    };
-                    auditEntries.push(meta);
-                }
+                await this.drawAnnotation(pdfDoc, page, annotation, scaleFactor, pageHeight, auditEntries, pageData.pageNum);
             }
         }
 
@@ -80,7 +67,7 @@ export class PDFExporter {
     /**
      * Draw a single annotation on a PDF page
      */
-    async drawAnnotation(pdfDoc, page, annotation, scaleFactor, pageHeight) {
+    async drawAnnotation(pdfDoc, page, annotation, scaleFactor, pageHeight, auditEntries = null, pageNum = null) {
         const obj = annotation.object;
         const type = annotation.type;
 
@@ -113,22 +100,34 @@ export class PDFExporter {
             case 'signature':
             case 'image':
                 await this.drawImage(pdfDoc, page, obj, scaleFactor, pageHeight);
+                // Handle signature audit trail
+                if (type === 'signature' && obj._signatureMeta && auditEntries !== null && pageNum !== null) {
+                    const meta = { ...obj._signatureMeta };
+                    meta.pageNum = pageNum;
+                    meta.bounds = {
+                        left: bounds.left * scaleFactor,
+                        top: pageHeight - (bounds.top + bounds.height) * scaleFactor,
+                        width: bounds.width * scaleFactor,
+                        height: bounds.height * scaleFactor
+                    };
+                    auditEntries.push(meta);
+                }
                 break;
 
             case 'textfield':
-                this.drawFormField(page, obj, scaleFactor, pageHeight, 'text');
+                await this.createFormField(pdfDoc, page, obj, scaleFactor, pageHeight, 'text');
                 break;
 
             case 'checkbox':
-                this.drawFormField(page, obj, scaleFactor, pageHeight, 'checkbox');
+                await this.createFormField(pdfDoc, page, obj, scaleFactor, pageHeight, 'checkbox');
                 break;
 
             case 'group':
                 // Handle grouped objects
                 if (obj._annotationType === 'textfield') {
-                    this.drawFormField(page, obj, scaleFactor, pageHeight, 'text');
+                    await this.createFormField(pdfDoc, page, obj, scaleFactor, pageHeight, 'text');
                 } else if (obj._annotationType === 'checkbox') {
-                    this.drawFormField(page, obj, scaleFactor, pageHeight, 'checkbox');
+                    await this.createFormField(pdfDoc, page, obj, scaleFactor, pageHeight, 'checkbox');
                 }
                 break;
         }
@@ -327,6 +326,62 @@ export class PDFExporter {
             });
         } catch (error) {
             console.error('Error embedding image:', error);
+        }
+    }
+
+    /**
+     * Create actual PDF form field (for bulk filling)
+     */
+    async createFormField(pdfDoc, page, obj, scaleFactor, pageHeight, fieldType) {
+        const bounds = obj.getBoundingRect();
+        const left = bounds.left * scaleFactor;
+        const width = bounds.width * scaleFactor;
+        const height = bounds.height * scaleFactor;
+        const top = pageHeight - bounds.top * scaleFactor - height;
+        const fieldName = obj._fieldName || '';
+
+        // Only create form field if it has a name
+        if (!fieldName) {
+            // Fall back to visual representation if no name
+            this.drawFormField(page, obj, scaleFactor, pageHeight, fieldType);
+            return;
+        }
+
+        try {
+            if (fieldType === 'text') {
+                const textField = pdfDoc.form.createTextField(fieldName);
+                textField.addToPage(page, {
+                    x: left,
+                    y: top,
+                    width: width,
+                    height: height,
+                    borderColor: rgb(0.15, 0.39, 0.92),
+                    borderWidth: 1,
+                    backgroundColor: rgb(1, 1, 1)
+                });
+                // Set value if present
+                if (obj._fieldValue) {
+                    textField.setText(obj._fieldValue);
+                }
+            } else if (fieldType === 'checkbox') {
+                const checkbox = pdfDoc.form.createCheckBox(fieldName);
+                checkbox.addToPage(page, {
+                    x: left,
+                    y: top,
+                    width: width,
+                    height: height,
+                    borderColor: rgb(0.15, 0.39, 0.92),
+                    borderWidth: 1,
+                    backgroundColor: rgb(1, 1, 1)
+                });
+                if (obj._checked) {
+                    checkbox.check();
+                }
+            }
+        } catch (error) {
+            console.warn('Failed to create PDF form field, falling back to visual:', error);
+            // Fall back to visual representation
+            this.drawFormField(page, obj, scaleFactor, pageHeight, fieldType);
         }
     }
 

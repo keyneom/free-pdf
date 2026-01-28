@@ -996,3 +996,92 @@ label.btn {
 .canvas-container .upper-canvas {
     cursor: default;
 }
+
+/* Bulk Fill Modal */
+.bulk-fill-description {
+    margin-bottom: 20px;
+    color: var(--text-secondary);
+    line-height: 1.5;
+}
+
+.bulk-fill-hint {
+    display: block;
+    font-size: 0.8rem;
+    color: var(--text-secondary);
+    margin-top: 4px;
+    line-height: 1.4;
+}
+
+.bulk-fill-mapping {
+    margin-top: 24px;
+    padding: 16px;
+    background: var(--bg-color);
+    border-radius: var(--radius-md);
+}
+
+.bulk-fill-mapping h4 {
+    margin: 0 0 8px 0;
+    font-size: 1rem;
+    font-weight: 600;
+}
+
+.bulk-fill-mapping-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 12px;
+}
+
+.bulk-fill-mapping-row:last-child {
+    margin-bottom: 0;
+}
+
+.bulk-fill-mapping-row label {
+    min-width: 150px;
+    font-size: 0.875rem;
+    font-weight: 500;
+}
+
+.bulk-fill-mapping-select {
+    flex: 1;
+    padding: 8px 12px;
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    font-size: 0.875rem;
+    background: white;
+}
+
+.bulk-fill-mapping-select:focus {
+    outline: none;
+    border-color: var(--primary-color);
+}
+
+.bulk-fill-progress {
+    margin-top: 20px;
+    padding: 16px;
+    background: var(--bg-color);
+    border-radius: var(--radius-md);
+}
+
+.bulk-fill-progress-bar {
+    width: 100%;
+    height: 24px;
+    background: var(--border-color);
+    border-radius: var(--radius-md);
+    overflow: hidden;
+    margin-bottom: 8px;
+}
+
+.bulk-fill-progress-fill {
+    height: 100%;
+    background: var(--primary-color);
+    transition: width 0.3s ease;
+    width: 0%;
+}
+
+.bulk-fill-progress-text {
+    margin: 0;
+    font-size: 0.875rem;
+    color: var(--text-secondary);
+    text-align: center;
+}
