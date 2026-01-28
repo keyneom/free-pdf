@@ -30,6 +30,8 @@ export class PDFExporter {
         this.fonts.courier = await pdfDoc.embedFont(StandardFonts.Courier);
 
         const pages = pdfDoc.getPages();
+        const scaleFactor = 1 / scale;
+        const auditEntries = [];
 
         // Process each page's annotations
         for (const pageData of allAnnotations) {
@@ -39,13 +41,36 @@ export class PDFExporter {
             const page = pages[pageIndex];
             const { width: pageWidth, height: pageHeight } = page.getSize();
 
-            // Calculate scale factor (canvas coords to PDF coords)
-            const scaleFactor = 1 / scale;
-
             for (const annotation of pageData.annotations) {
                 await this.drawAnnotation(pdfDoc, page, annotation, scaleFactor, pageHeight);
+
+                if (annotation.type === 'signature' && annotation.object._signatureMeta) {
+                    const meta = { ...annotation.object._signatureMeta };
+                    meta.pageNum = pageData.pageNum;
+                    const b = annotation.object.getBoundingRect();
+                    meta.bounds = {
+                        left: b.left * scaleFactor,
+                        top: pageHeight - (b.top + b.height) * scaleFactor,
+                        width: b.width * scaleFactor,
+                        height: b.height * scaleFactor
+                    };
+                    auditEntries.push(meta);
+                }
             }
         }
+
+        if (auditEntries.length > 0) {
+            const auditJson = JSON.stringify(auditEntries, null, 2);
+            const auditBytes = new TextEncoder().encode(auditJson);
+            await pdfDoc.attach(auditBytes, 'signatures-audit.json', {
+                mimeType: 'application/json',
+                description: 'Signature audit trail'
+            });
+        }
+
+        pdfDoc.setModificationDate(new Date());
+        pdfDoc.setProducer('Free PDF Editor');
+        pdfDoc.setCreator('Free PDF Editor');
 
         // Save and return the modified PDF
         const modifiedPdfBytes = await pdfDoc.save();
@@ -190,49 +215,27 @@ export class PDFExporter {
      * Draw freehand path
      */
     async drawPath(pdfDoc, page, obj, scaleFactor, pageHeight) {
-        // Get path data
-        const pathData = obj.path;
-        if (!pathData || pathData.length === 0) return;
+        try {
+            const dataUrl = obj.toDataURL?.({ format: 'png', multiplier: 2 });
+            if (!dataUrl || !dataUrl.startsWith('data:image')) return;
 
-        const strokeColor = this.parseColor(obj.stroke || '#000000');
-        const strokeWidth = (obj.strokeWidth || 2) * scaleFactor;
+            const bounds = obj.getBoundingRect();
+            const left = bounds.left * scaleFactor;
+            const width = bounds.width * scaleFactor;
+            const height = bounds.height * scaleFactor;
+            const top = pageHeight - bounds.top * scaleFactor - height;
 
-        // Convert Fabric.js path to PDF path
-        // Fabric path is array of commands: ['M', x, y], ['L', x, y], ['Q', cx, cy, x, y], etc.
-        let pdfPathData = '';
-        const offsetX = (obj.left || 0) + (obj.pathOffset?.x || 0);
-        const offsetY = (obj.top || 0) + (obj.pathOffset?.y || 0);
+            const imageBytes = this.dataUrlToBytes(dataUrl);
+            const pdfImage = await pdfDoc.embedPng(imageBytes);
 
-        for (const cmd of pathData) {
-            const command = cmd[0];
-            switch (command) {
-                case 'M':
-                    const mx = (cmd[1] + offsetX) * scaleFactor;
-                    const my = pageHeight - (cmd[2] + offsetY) * scaleFactor;
-                    pdfPathData += `${mx} ${my} m `;
-                    break;
-                case 'L':
-                    const lx = (cmd[1] + offsetX) * scaleFactor;
-                    const ly = pageHeight - (cmd[2] + offsetY) * scaleFactor;
-                    pdfPathData += `${lx} ${ly} l `;
-                    break;
-                case 'Q':
-                    const qcx = (cmd[1] + offsetX) * scaleFactor;
-                    const qcy = pageHeight - (cmd[2] + offsetY) * scaleFactor;
-                    const qx = (cmd[3] + offsetX) * scaleFactor;
-                    const qy = pageHeight - (cmd[4] + offsetY) * scaleFactor;
-                    // Convert quadratic to cubic bezier for PDF
-                    pdfPathData += `${qcx} ${qcy} ${qx} ${qy} v `;
-                    break;
-            }
-        }
-
-        // Draw the path using raw PDF operators
-        if (pdfPathData) {
-            page.drawSvgPath(this.fabricPathToSvg(obj, scaleFactor, pageHeight), {
-                borderColor: rgb(strokeColor.r, strokeColor.g, strokeColor.b),
-                borderWidth: strokeWidth
+            page.drawImage(pdfImage, {
+                x: left,
+                y: top,
+                width: width,
+                height: height
             });
+        } catch (e) {
+            console.warn('Export path as image failed:', e);
         }
     }
 
