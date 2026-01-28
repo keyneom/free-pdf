@@ -426,10 +426,31 @@ export class CanvasManager {
         // Update drawing brush if in draw mode
         if (this.activeTool === 'draw') {
             this.canvases.forEach((canvas) => {
-                canvas.freeDrawingBrush.color = this.settings.strokeColor;
-                canvas.freeDrawingBrush.width = this.settings.strokeWidth;
+                if (canvas.freeDrawingBrush) {
+                    canvas.freeDrawingBrush.color = this.settings.strokeColor;
+                    canvas.freeDrawingBrush.width = this.settings.strokeWidth;
+                }
             });
         }
+
+        // If a text object is selected, apply relevant text settings immediately
+        this.canvases.forEach((canvas) => {
+            const activeObject = canvas.getActiveObject();
+            if (activeObject && activeObject._annotationType === 'text') {
+                if ('textColor' in newSettings) {
+                    activeObject.set('fill', this.settings.textColor);
+                }
+                if ('fontSize' in newSettings) {
+                    // Account for current zoom so visual size matches control value
+                    activeObject.set('fontSize', this.settings.fontSize / this.currentScale);
+                }
+                if ('fontFamily' in newSettings) {
+                    activeObject.set('fontFamily', this.settings.fontFamily);
+                }
+                activeObject.setCoords();
+                canvas.renderAll();
+            }
+        });
     }
 
     /**

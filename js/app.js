@@ -188,24 +188,37 @@ class PDFEditorApp {
 
             // Tool shortcuts
             if (!e.ctrlKey && !e.metaKey) {
-                switch (e.key.toLowerCase()) {
-                    case 'v':
-                        this.selectToolByName('select');
-                        break;
-                    case 't':
-                        this.selectToolByName('text');
-                        break;
-                    case 'w':
-                        this.selectToolByName('whiteout');
-                        break;
-                    case 'd':
-                        this.selectToolByName('draw');
-                        break;
-                    case 's':
-                        if (!e.ctrlKey && !e.metaKey) {
+                // Don't switch tools while typing in inputs/textareas/contentEditable
+                const activeEl = document.activeElement;
+                const isTypingInInput =
+                    activeEl &&
+                    (activeEl.tagName === 'INPUT' ||
+                        activeEl.tagName === 'TEXTAREA' ||
+                        activeEl.isContentEditable);
+
+                // Don't switch tools while editing a canvas text object
+                const activeCanvas = this.canvasManager.activeCanvas;
+                const isEditingCanvasText =
+                    !!(activeCanvas && activeCanvas.getActiveObject()?.isEditing);
+
+                if (!isTypingInInput && !isEditingCanvasText) {
+                    switch (e.key.toLowerCase()) {
+                        case 'v':
+                            this.selectToolByName('select');
+                            break;
+                        case 't':
+                            this.selectToolByName('text');
+                            break;
+                        case 'w':
+                            this.selectToolByName('whiteout');
+                            break;
+                        case 'd':
+                            this.selectToolByName('draw');
+                            break;
+                        case 's':
                             this.selectToolByName('signature');
-                        }
-                        break;
+                            break;
+                    }
                 }
             }
 
