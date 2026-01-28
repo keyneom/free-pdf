@@ -1,0 +1,675 @@
+/* CSS Variables */
+:root {
+    --primary-color: #2563eb;
+    --primary-hover: #1d4ed8;
+    --bg-color: #f3f4f6;
+    --surface-color: #ffffff;
+    --text-color: #1f2937;
+    --text-secondary: #6b7280;
+    --border-color: #e5e7eb;
+    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.05);
+    --shadow-md: 0 4px 6px rgba(0, 0, 0, 0.1);
+    --shadow-lg: 0 10px 15px rgba(0, 0, 0, 0.1);
+    --radius-sm: 4px;
+    --radius-md: 8px;
+    --radius-lg: 12px;
+}
+
+/* Reset */
+*, *::before, *::after {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+}
+
+body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+    background-color: var(--bg-color);
+    color: var(--text-color);
+    overflow: hidden;
+    height: 100vh;
+}
+
+#app {
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+}
+
+/* Toolbar */
+.toolbar {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 8px 16px;
+    background: var(--surface-color);
+    border-bottom: 1px solid var(--border-color);
+    box-shadow: var(--shadow-sm);
+    z-index: 100;
+    flex-wrap: wrap;
+}
+
+.toolbar-section {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.toolbar-section.tools {
+    flex: 1;
+    justify-content: center;
+}
+
+.toolbar-section.actions {
+    justify-content: flex-end;
+}
+
+.toolbar-section.tool-options {
+    padding: 4px 12px;
+    background: var(--bg-color);
+    border-radius: var(--radius-md);
+    min-height: 36px;
+}
+
+.logo {
+    font-size: 1.25rem;
+    font-weight: 700;
+    color: var(--primary-color);
+    white-space: nowrap;
+}
+
+.divider {
+    width: 1px;
+    height: 24px;
+    background: var(--border-color);
+    margin: 0 8px;
+}
+
+/* Buttons */
+.tool-btn {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 12px;
+    border: none;
+    background: transparent;
+    color: var(--text-color);
+    border-radius: var(--radius-md);
+    cursor: pointer;
+    transition: all 0.15s ease;
+    font-size: 0.875rem;
+    font-weight: 500;
+}
+
+.tool-btn:hover:not(:disabled) {
+    background: var(--bg-color);
+}
+
+.tool-btn.active {
+    background: var(--primary-color);
+    color: white;
+}
+
+.tool-btn.primary {
+    background: var(--primary-color);
+    color: white;
+}
+
+.tool-btn.primary:hover:not(:disabled) {
+    background: var(--primary-hover);
+}
+
+.tool-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.tool-btn svg {
+    flex-shrink: 0;
+}
+
+/* Tool Options */
+.tool-option {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 0.875rem;
+}
+
+.tool-option label {
+    color: var(--text-secondary);
+    white-space: nowrap;
+}
+
+.tool-option input[type="color"] {
+    width: 28px;
+    height: 28px;
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    padding: 0;
+}
+
+.tool-option input[type="range"] {
+    width: 80px;
+}
+
+.tool-option input[type="number"] {
+    width: 60px;
+    padding: 4px 8px;
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-sm);
+    font-size: 0.875rem;
+}
+
+.tool-option select {
+    padding: 4px 8px;
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-sm);
+    font-size: 0.875rem;
+    background: white;
+}
+
+/* Main Content */
+.main-content {
+    flex: 1;
+    display: flex;
+    overflow: hidden;
+    position: relative;
+}
+
+/* Welcome Screen */
+.welcome-screen {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex: 1;
+    background: var(--bg-color);
+}
+
+.welcome-content {
+    text-align: center;
+    padding: 48px;
+}
+
+.welcome-icon {
+    color: var(--primary-color);
+    margin-bottom: 24px;
+}
+
+.welcome-content h2 {
+    font-size: 1.75rem;
+    margin-bottom: 8px;
+    color: var(--text-color);
+}
+
+.welcome-content p {
+    color: var(--text-secondary);
+    margin-bottom: 24px;
+}
+
+.welcome-content .hint {
+    font-size: 0.875rem;
+    margin-top: 16px;
+}
+
+.welcome-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 14px 28px;
+    background: var(--primary-color);
+    color: white;
+    border: none;
+    border-radius: var(--radius-md);
+    font-size: 1rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.15s ease;
+}
+
+.welcome-btn:hover {
+    background: var(--primary-hover);
+}
+
+/* PDF Container */
+.pdf-container {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    overflow: hidden;
+}
+
+.pdf-container.hidden {
+    display: none;
+}
+
+/* Page Navigation */
+.page-nav {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 16px;
+    padding: 8px 16px;
+    background: var(--surface-color);
+    border-bottom: 1px solid var(--border-color);
+}
+
+.nav-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    border: 1px solid var(--border-color);
+    background: white;
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    transition: all 0.15s ease;
+}
+
+.nav-btn:hover:not(:disabled) {
+    background: var(--bg-color);
+    border-color: var(--text-secondary);
+}
+
+.nav-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.page-info {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 0.875rem;
+    color: var(--text-secondary);
+}
+
+.page-info input {
+    width: 50px;
+    padding: 4px 8px;
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-sm);
+    text-align: center;
+    font-size: 0.875rem;
+}
+
+.zoom-controls {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-left: 32px;
+    padding-left: 32px;
+    border-left: 1px solid var(--border-color);
+}
+
+#zoom-level {
+    font-size: 0.875rem;
+    color: var(--text-secondary);
+    min-width: 50px;
+    text-align: center;
+}
+
+/* PDF Scroll Area */
+.pdf-scroll-area {
+    flex: 1;
+    overflow: auto;
+    background: #525659;
+    padding: 24px;
+}
+
+.pdf-pages {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 24px;
+}
+
+/* Page Wrapper */
+.page-wrapper {
+    position: relative;
+    background: white;
+    box-shadow: var(--shadow-lg);
+}
+
+.page-wrapper canvas.pdf-canvas {
+    display: block;
+}
+
+.page-wrapper .annotation-canvas {
+    position: absolute;
+    top: 0;
+    left: 0;
+    z-index: 10;
+}
+
+/* Hidden utility class */
+.hidden {
+    display: none !important;
+}
+
+/* Modal */
+.modal {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.5);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+}
+
+.modal.hidden {
+    display: none;
+}
+
+.modal-content {
+    background: white;
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-lg);
+    width: 90%;
+    max-width: 480px;
+    overflow: hidden;
+}
+
+.modal-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 16px 20px;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.modal-header h3 {
+    font-size: 1.125rem;
+    font-weight: 600;
+}
+
+.modal-close {
+    background: none;
+    border: none;
+    font-size: 1.5rem;
+    cursor: pointer;
+    color: var(--text-secondary);
+    padding: 0;
+    line-height: 1;
+}
+
+.modal-close:hover {
+    color: var(--text-color);
+}
+
+.modal-body {
+    padding: 20px;
+}
+
+.modal-footer {
+    display: flex;
+    justify-content: flex-end;
+    gap: 12px;
+    padding: 16px 20px;
+    border-top: 1px solid var(--border-color);
+    background: var(--bg-color);
+}
+
+/* Buttons */
+.btn {
+    padding: 10px 20px;
+    border: none;
+    border-radius: var(--radius-md);
+    font-size: 0.875rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.15s ease;
+}
+
+.btn-primary {
+    background: var(--primary-color);
+    color: white;
+}
+
+.btn-primary:hover {
+    background: var(--primary-hover);
+}
+
+.btn-secondary {
+    background: var(--bg-color);
+    color: var(--text-color);
+    border: 1px solid var(--border-color);
+}
+
+.btn-secondary:hover {
+    background: var(--border-color);
+}
+
+/* Signature Modal */
+.signature-tabs {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 16px;
+}
+
+.sig-tab {
+    flex: 1;
+    padding: 10px;
+    border: 1px solid var(--border-color);
+    background: white;
+    border-radius: var(--radius-md);
+    cursor: pointer;
+    font-weight: 500;
+    transition: all 0.15s ease;
+}
+
+.sig-tab.active {
+    background: var(--primary-color);
+    color: white;
+    border-color: var(--primary-color);
+}
+
+.signature-area {
+    position: relative;
+}
+
+.sig-tab-content {
+    display: none;
+}
+
+.sig-tab-content.active {
+    display: block;
+}
+
+#signature-canvas {
+    width: 100%;
+    height: 150px;
+    border: 2px dashed var(--border-color);
+    border-radius: var(--radius-md);
+    cursor: crosshair;
+    touch-action: none;
+}
+
+.sig-clear {
+    margin-top: 8px;
+    padding: 6px 12px;
+    background: var(--bg-color);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    font-size: 0.875rem;
+}
+
+.sig-clear:hover {
+    background: var(--border-color);
+}
+
+.sig-text-input {
+    width: 100%;
+    padding: 12px;
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    font-size: 1.25rem;
+    margin-bottom: 12px;
+}
+
+.sig-font-options {
+    display: flex;
+    gap: 16px;
+    margin-bottom: 16px;
+}
+
+.sig-font-options label {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 0.875rem;
+    cursor: pointer;
+}
+
+.sig-preview {
+    min-height: 60px;
+    padding: 16px;
+    background: var(--bg-color);
+    border-radius: var(--radius-md);
+    text-align: center;
+    font-size: 2rem;
+}
+
+.sig-preview.cursive {
+    font-family: 'Brush Script MT', cursive;
+}
+
+.sig-preview.handwriting {
+    font-family: 'Comic Sans MS', cursive;
+}
+
+.sig-preview.formal {
+    font-family: 'Times New Roman', serif;
+    font-style: italic;
+}
+
+/* Loading Overlay */
+.loading-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(255, 255, 255, 0.9);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    z-index: 2000;
+}
+
+.loading-overlay.hidden {
+    display: none;
+}
+
+.loading-spinner {
+    width: 48px;
+    height: 48px;
+    border: 4px solid var(--border-color);
+    border-top-color: var(--primary-color);
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+    margin-bottom: 16px;
+}
+
+@keyframes spin {
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+#loading-text {
+    color: var(--text-secondary);
+    font-size: 0.875rem;
+}
+
+/* Drag and Drop Styling */
+.welcome-screen.drag-over .welcome-content {
+    background: rgba(37, 99, 235, 0.1);
+    border: 2px dashed var(--primary-color);
+    border-radius: var(--radius-lg);
+}
+
+/* Canvas text cursor */
+.canvas-container.text-mode {
+    cursor: text !important;
+}
+
+/* Form field styles on canvas */
+.form-field-input {
+    position: absolute;
+    border: 2px solid var(--primary-color);
+    background: rgba(255, 255, 255, 0.9);
+    padding: 4px 8px;
+    font-size: 14px;
+    outline: none;
+    z-index: 100;
+}
+
+.form-field-checkbox {
+    position: absolute;
+    width: 20px;
+    height: 20px;
+    cursor: pointer;
+    z-index: 100;
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+    .toolbar {
+        padding: 8px;
+        gap: 8px;
+    }
+
+    .toolbar-section.tools {
+        order: 3;
+        width: 100%;
+        justify-content: flex-start;
+        overflow-x: auto;
+        padding: 8px 0;
+    }
+
+    .tool-btn span {
+        display: none;
+    }
+
+    .tool-btn {
+        padding: 8px;
+    }
+
+    .divider {
+        display: none;
+    }
+
+    .zoom-controls {
+        margin-left: 16px;
+        padding-left: 16px;
+    }
+
+    .page-nav {
+        flex-wrap: wrap;
+        gap: 8px;
+    }
+}
+
+/* Annotation object styles */
+.annotation-text {
+    cursor: move;
+}
+
+/* Custom cursor for drawing mode */
+.drawing-mode canvas {
+    cursor: crosshair !important;
+}
+
+/* Selection handles */
+.canvas-container .upper-canvas {
+    cursor: default;
+}

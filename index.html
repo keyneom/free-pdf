@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PDF Editor - Free Online PDF Editing Tool</title>
+    <link rel="stylesheet" href="css/styles.css">
+    <!-- PDF.js for rendering PDFs -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+    <!-- Fabric.js for canvas-based WYSIWYG editing -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/fabric.js/5.3.1/fabric.min.js"></script>
+    <!-- pdf-lib for PDF manipulation and export -->
+    <script src="https://unpkg.com/pdf-lib@1.17.1/dist/pdf-lib.min.js"></script>
+    <!-- fontkit for custom fonts in pdf-lib -->
+    <script src="https://unpkg.com/@pdf-lib/fontkit@1.1.1/dist/fontkit.umd.min.js"></script>
+</head>
+<body>
+    <div id="app">
+        <!-- Header/Toolbar -->
+        <header class="toolbar">
+            <div class="toolbar-section">
+                <h1 class="logo">PDF Editor</h1>
+            </div>
+            <div class="toolbar-section tools">
+                <button id="btn-open" class="tool-btn primary" title="Open PDF">
+                    <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M19 20H5V4h9v5h5v11zm-7-16H5c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V7l-5-5z"/></svg>
+                    <span>Open PDF</span>
+                </button>
+                <input type="file" id="file-input" accept=".pdf" hidden>
+
+                <div class="divider"></div>
+
+                <button id="btn-select" class="tool-btn active" title="Select (V)" data-tool="select">
+                    <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M13.64 21.97C13.14 22.21 12.54 22 12.31 21.5L10.13 16.76L7.62 18.78C7.45 18.92 7.24 19 7 19C6.45 19 6 18.55 6 18V3C6 2.45 6.45 2 7 2C7.24 2 7.47 2.09 7.64 2.23L7.65 2.22L19.14 11.86C19.57 12.22 19.62 12.85 19.27 13.27C19.1 13.5 18.84 13.61 18.56 13.61L14.39 13.57L16.58 18.31C16.82 18.81 16.61 19.41 16.11 19.65L13.64 21.97Z"/></svg>
+                </button>
+
+                <button id="btn-text" class="tool-btn" title="Add Text (T)" data-tool="text">
+                    <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M5 4v3h5.5v12h3V7H19V4H5z"/></svg>
+                </button>
+
+                <button id="btn-whiteout" class="tool-btn" title="Whiteout (W)" data-tool="whiteout">
+                    <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 16H5V5h14v14z"/><rect fill="currentColor" x="7" y="7" width="10" height="10"/></svg>
+                </button>
+
+                <button id="btn-draw" class="tool-btn" title="Freehand Draw (D)" data-tool="draw">
+                    <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.84 1.83 3.75 3.75M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25z"/></svg>
+                </button>
+
+                <button id="btn-signature" class="tool-btn" title="Signature (S)" data-tool="signature">
+                    <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M7 22v-2h14v2H7zm0-4v-2h14v2H7zm-5-4c.7 0 1.4-.2 2-.6l1.5 1.5c-1 .7-2.2 1.1-3.5 1.1v-2zm1.5-1.5L2 11c.4-.6.6-1.3.6-2H4.6c0 1.3-.4 2.5-1.1 3.5zM2 7c0-.7.2-1.4.6-2l1.5 1.5C3.4 6.8 3 7.4 3 8H1.1c-.1-.3-.1-.7-.1-1zm5-5h2v2c-.7 0-1.4.2-2 .6L5.5 3.1c.6-.4 1.3-.7 2-.8V2h.5zM4.1 3.1L5.6 4.6C5.2 5.2 5 5.8 5 6.5H3c0-1.3.4-2.5 1.1-3.4zm5.4 6.4c-.6.4-1.2.6-1.9.6L7.6 8.6c.3-.2.6-.4.8-.7l1.1 1.6z"/></svg>
+                </button>
+
+                <div class="divider"></div>
+
+                <button id="btn-textfield" class="tool-btn" title="Form Text Field" data-tool="textfield">
+                    <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M4 7v2h16V7H4zm0 6h16v-2H4v2zm0 4h16v-2H4v2z"/></svg>
+                </button>
+
+                <button id="btn-checkbox" class="tool-btn" title="Form Checkbox" data-tool="checkbox">
+                    <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 16H5V5h14v14zM17.99 9l-1.41-1.42-6.59 6.59-2.58-2.57-1.42 1.41 4 3.99z"/></svg>
+                </button>
+            </div>
+
+            <div class="toolbar-section tool-options" id="tool-options">
+                <!-- Dynamic tool options appear here -->
+            </div>
+
+            <div class="toolbar-section actions">
+                <button id="btn-undo" class="tool-btn" title="Undo (Ctrl+Z)" disabled>
+                    <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M12.5 8c-2.65 0-5.05.99-6.9 2.6L2 7v9h9l-3.62-3.62c1.39-1.16 3.16-1.88 5.12-1.88 3.54 0 6.55 2.31 7.6 5.5l2.37-.78C21.08 11.03 17.15 8 12.5 8z"/></svg>
+                </button>
+                <button id="btn-redo" class="tool-btn" title="Redo (Ctrl+Y)" disabled>
+                    <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M18.4 10.6C16.55 8.99 14.15 8 11.5 8c-4.65 0-8.58 3.03-9.96 7.22L3.9 16c1.05-3.19 4.05-5.5 7.6-5.5 1.95 0 3.73.72 5.12 1.88L13 16h9V7l-3.6 3.6z"/></svg>
+                </button>
+                <button id="btn-delete" class="tool-btn" title="Delete Selected (Del)" disabled>
+                    <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg>
+                </button>
+
+                <div class="divider"></div>
+
+                <button id="btn-save" class="tool-btn primary" title="Download PDF" disabled>
+                    <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M19 12v7H5v-7H3v7c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2v-7h-2zm-6 .67l2.59-2.58L17 11.5l-5 5-5-5 1.41-1.41L11 12.67V3h2v9.67z"/></svg>
+                    <span>Download</span>
+                </button>
+            </div>
+        </header>
+
+        <!-- Main Content Area -->
+        <main class="main-content">
+            <!-- Welcome Screen -->
+            <div id="welcome-screen" class="welcome-screen">
+                <div class="welcome-content">
+                    <svg class="welcome-icon" viewBox="0 0 24 24" width="80" height="80">
+                        <path fill="currentColor" d="M14 2H6c-1.1 0-1.99.9-1.99 2L4 20c0 1.1.89 2 1.99 2H18c1.1 0 2-.9 2-2V8l-6-6zm4 18H6V4h7v5h5v11z"/>
+                        <path fill="currentColor" d="M9 13h6v2H9zm0 3h6v2H9zm0-6h4v2H9z"/>
+                    </svg>
+                    <h2>Welcome to PDF Editor</h2>
+                    <p>Open a PDF file to start editing</p>
+                    <button id="btn-open-welcome" class="welcome-btn">
+                        <svg viewBox="0 0 24 24" width="24" height="24"><path fill="currentColor" d="M19 20H5V4h9v5h5v11zm-7-16H5c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V7l-5-5z"/></svg>
+                        Open PDF File
+                    </button>
+                    <p class="hint">or drag and drop a PDF file here</p>
+                </div>
+            </div>
+
+            <!-- PDF Viewer Container -->
+            <div id="pdf-container" class="pdf-container hidden">
+                <!-- Page Navigation -->
+                <div class="page-nav">
+                    <button id="btn-prev-page" class="nav-btn" disabled>
+                        <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M15.41 7.41L14 6l-6 6 6 6 1.41-1.41L10.83 12z"/></svg>
+                    </button>
+                    <span class="page-info">
+                        Page <input type="number" id="page-input" min="1" value="1"> of <span id="total-pages">1</span>
+                    </span>
+                    <button id="btn-next-page" class="nav-btn" disabled>
+                        <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M10 6L8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z"/></svg>
+                    </button>
+
+                    <div class="zoom-controls">
+                        <button id="btn-zoom-out" class="nav-btn" title="Zoom Out">
+                            <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M19 13H5v-2h14v2z"/></svg>
+                        </button>
+                        <span id="zoom-level">100%</span>
+                        <button id="btn-zoom-in" class="nav-btn" title="Zoom In">
+                            <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>
+                        </button>
+                        <button id="btn-fit-width" class="nav-btn" title="Fit Width">
+                            <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M4 15h16v-2H4v2zm0 4h16v-2H4v2zm0-8h16V9H4v2zm0-6v2h16V5H4z"/></svg>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Scrollable PDF Area -->
+                <div class="pdf-scroll-area" id="pdf-scroll-area">
+                    <div class="pdf-pages" id="pdf-pages">
+                        <!-- PDF pages will be rendered here -->
+                    </div>
+                </div>
+            </div>
+        </main>
+
+        <!-- Signature Modal -->
+        <div id="signature-modal" class="modal hidden">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h3>Create Signature</h3>
+                    <button class="modal-close" id="signature-modal-close">&times;</button>
+                </div>
+                <div class="modal-body">
+                    <div class="signature-tabs">
+                        <button class="sig-tab active" data-tab="draw">Draw</button>
+                        <button class="sig-tab" data-tab="type">Type</button>
+                    </div>
+                    <div class="signature-area">
+                        <div id="sig-draw-area" class="sig-tab-content active">
+                            <canvas id="signature-canvas" width="400" height="150"></canvas>
+                            <button id="sig-clear" class="sig-clear">Clear</button>
+                        </div>
+                        <div id="sig-type-area" class="sig-tab-content">
+                            <input type="text" id="sig-text-input" placeholder="Type your signature..." class="sig-text-input">
+                            <div class="sig-font-options">
+                                <label><input type="radio" name="sig-font" value="cursive" checked> Cursive</label>
+                                <label><input type="radio" name="sig-font" value="handwriting"> Handwriting</label>
+                                <label><input type="radio" name="sig-font" value="formal"> Formal</label>
+                            </div>
+                            <div id="sig-preview" class="sig-preview"></div>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button id="sig-cancel" class="btn btn-secondary">Cancel</button>
+                    <button id="sig-apply" class="btn btn-primary">Insert Signature</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Loading Overlay -->
+        <div id="loading-overlay" class="loading-overlay hidden">
+            <div class="loading-spinner"></div>
+            <p id="loading-text">Loading...</p>
+        </div>
+    </div>
+
+    <script src="js/app.js" type="module"></script>
+</body>
+</html>
