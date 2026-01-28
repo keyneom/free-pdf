@@ -6,6 +6,18 @@ import { PDFHandler } from './pdf-handler.js';
 import { CanvasManager } from './canvas-manager.js';
 import { PDFExporter } from './export.js';
 import { SignaturePad } from './signature-pad.js';
+import { emailTemplates } from './email-templates.js';
+
+function escapeHtml(s) {
+    if (s == null) return '';
+    const t = String(s);
+    return t
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
 
 class PDFEditorApp {
     constructor() {
@@ -16,6 +28,7 @@ class PDFEditorApp {
 
         this.currentScale = 1.0;
         this.fileName = 'document.pdf';
+        this.documentHash = null;
 
         this.init();
     }
@@ -29,6 +42,9 @@ class PDFEditorApp {
         this.setupDragAndDrop();
         this.setupKeyboardShortcuts();
         this.initSignaturePad();
+        this.setupSendModal();
+        this.setupTemplatesModal();
+        this.setupTemplateEditModal();
     }
 
     /**
@@ -48,6 +64,8 @@ class PDFEditorApp {
         this.btnOpen = document.getElementById('btn-open');
         this.btnOpenWelcome = document.getElementById('btn-open-welcome');
         this.btnSave = document.getElementById('btn-save');
+        this.btnSend = document.getElementById('btn-send');
+        this.btnTemplates = document.getElementById('btn-templates');
         this.btnUndo = document.getElementById('btn-undo');
         this.btnRedo = document.getElementById('btn-redo');
         this.btnDelete = document.getElementById('btn-delete');
@@ -76,6 +94,11 @@ class PDFEditorApp {
 
         // Signature modal
         this.signatureModal = document.getElementById('signature-modal');
+
+        // Send / Templates modals
+        this.sendModal = document.getElementById('send-modal');
+        this.templatesModal = document.getElementById('templates-modal');
+        this.templateEditModal = document.getElementById('template-edit-modal');
     }
 
     /**
@@ -89,6 +112,10 @@ class PDFEditorApp {
 
         // Save/Export
         this.btnSave.addEventListener('click', () => this.exportPDF());
+
+        // Send / Templates
+        this.btnSend?.addEventListener('click', () => this.showSendModal());
+        this.btnTemplates?.addEventListener('click', () => this.showTemplatesModal());
 
         // Undo/Redo
         this.btnUndo.addEventListener('click', () => {
@@ -231,6 +258,17 @@ class PDFEditorApp {
     }
 
     /**
+     * Compute SHA-256 hash of document bytes for audit association
+     * @param {ArrayBuffer} buffer
+     * @returns {Promise<string>} Hex-encoded hash
+     */
+    async computeDocumentHash(buffer) {
+        const hashBuffer = await crypto.subtle.digest('SHA-256', buffer);
+        const hashArray = Array.from(new Uint8Array(hashBuffer));
+        return hashArray.map((b) => b.toString(16).padStart(2, '0')).join('');
+    }
+
+    /**
      * Handle file selection
      */
     handleFileSelect(e) {
@@ -254,6 +292,7 @@ class PDFEditorApp {
 
         try {
             const arrayBuffer = await file.arrayBuffer();
+            this.documentHash = await this.computeDocumentHash(arrayBuffer);
             await this.pdfHandler.loadPDF(arrayBuffer);
 
             // Clear any existing canvases
@@ -273,6 +312,7 @@ class PDFEditorApp {
             this.welcomeScreen.classList.add('hidden');
             this.pdfContainer.classList.remove('hidden');
             this.btnSave.disabled = false;
+            this.btnSend.disabled = false;
             this.updatePageNavigation();
             this.updateZoomDisplay();
 
@@ -506,13 +546,28 @@ class PDFEditorApp {
         const textInput = document.getElementById('sig-text-input');
         const fontOptions = modal.querySelectorAll('input[name="sig-font"]');
         const preview = document.getElementById('sig-preview');
+        const intentCheck = document.getElementById('sig-intent');
+        const consentCheck = document.getElementById('sig-consent');
+        const nameInput = document.getElementById('sig-name');
+        const emailInput = document.getElementById('sig-email');
+        const sigCanvas = document.getElementById('signature-canvas');
+
+        const updateApplyState = () => this.updateSignatureApplyState();
 
         // Close modal
         closeBtn.addEventListener('click', () => this.hideSignatureModal());
         cancelBtn.addEventListener('click', () => this.hideSignatureModal());
 
         // Clear signature
-        clearBtn.addEventListener('click', () => this.signaturePad.clear());
+        clearBtn.addEventListener('click', () => {
+            this.signaturePad.clear();
+            updateApplyState();
+        });
+
+        // Consent + identity
+        [intentCheck, consentCheck].forEach((el) => el?.addEventListener('change', updateApplyState));
+        nameInput?.addEventListener('input', updateApplyState);
+        emailInput?.addEventListener('input', updateApplyState);
 
         // Tab switching
         tabs.forEach(tab => {
@@ -525,6 +580,7 @@ class PDFEditorApp {
                 document.getElementById('sig-type-area').classList.toggle('active', tabName === 'type');
 
                 this.signaturePad.setMode(tabName);
+                updateApplyState();
             });
         });
 
@@ -532,6 +588,7 @@ class PDFEditorApp {
         textInput.addEventListener('input', (e) => {
             this.signaturePad.setTypedText(e.target.value);
             this.signaturePad.updatePreview(preview);
+            updateApplyState();
         });
 
         // Font options
@@ -542,16 +599,16 @@ class PDFEditorApp {
             });
         });
 
+        // Draw end (mouseup/touchend on pad) to refresh Apply state
+        if (sigCanvas) {
+            sigCanvas.addEventListener('mouseup', updateApplyState);
+            sigCanvas.addEventListener('touchend', updateApplyState);
+        }
+
         // Apply signature
         applyBtn.addEventListener('click', () => {
-            const dataUrl = this.signaturePad.getDataUrl();
-            if (dataUrl) {
-                this.canvasManager.setSignature(dataUrl);
-                this.canvasManager.setTool('signature');
-                this.toolButtons.forEach(b => b.classList.remove('active'));
-                document.querySelector('[data-tool="signature"]')?.classList.add('active');
-                this.hideSignatureModal();
-            }
+            if (!this.validateAndApplySignature()) return;
+            this.hideSignatureModal();
         });
 
         // Close on backdrop click
@@ -563,13 +620,85 @@ class PDFEditorApp {
     }
 
     /**
+     * Update Insert Signature button enabled state based on form validity
+     */
+    updateSignatureApplyState() {
+        const intentCheck = document.getElementById('sig-intent');
+        const consentCheck = document.getElementById('sig-consent');
+        const nameInput = document.getElementById('sig-name');
+        const applyBtn = document.getElementById('sig-apply');
+        if (!intentCheck || !consentCheck || !nameInput || !applyBtn) return;
+
+        const intent = intentCheck.checked;
+        const consent = consentCheck.checked;
+        const name = (nameInput.value || '').trim();
+        const hasSignature = this.signaturePad.mode === 'draw'
+            ? !this.signaturePad.isEmpty()
+            : !!this.signaturePad.typedText?.trim();
+
+        applyBtn.disabled = !(intent && consent && name && hasSignature);
+    }
+
+    /**
+     * Validate form, build meta, set signature, and switch to signature tool
+     * @returns {boolean} true if applied
+     */
+    validateAndApplySignature() {
+        const intentCheck = document.getElementById('sig-intent');
+        const consentCheck = document.getElementById('sig-consent');
+        const nameInput = document.getElementById('sig-name');
+        const emailInput = document.getElementById('sig-email');
+        const applyBtn = document.getElementById('sig-apply');
+        if (!intentCheck || !consentCheck || !nameInput || !applyBtn) return false;
+
+        const intent = intentCheck.checked;
+        const consent = consentCheck.checked;
+        const name = (nameInput.value || '').trim();
+        const email = (emailInput?.value || '').trim();
+        const dataUrl = this.signaturePad.getDataUrl();
+
+        if (!intent || !consent || !name || !dataUrl) return false;
+
+        const meta = {
+            signerName: name,
+            signerEmail: email || undefined,
+            intentAccepted: intent,
+            consentAccepted: consent,
+            documentFilename: this.fileName || '',
+            documentHash: this.documentHash || undefined
+        };
+
+        this.canvasManager.setSignature(dataUrl, meta);
+        this.canvasManager.setTool('signature');
+        this.toolButtons.forEach(b => b.classList.remove('active'));
+        document.querySelector('[data-tool="signature"]')?.classList.add('active');
+        return true;
+    }
+
+    /**
      * Show signature modal
      */
     showSignatureModal() {
         this.signatureModal.classList.remove('hidden');
         this.signaturePad.clear();
-        document.getElementById('sig-text-input').value = '';
-        document.getElementById('sig-preview').textContent = 'Preview';
+        this.signaturePad.setTypedText('');
+        const textInput = document.getElementById('sig-text-input');
+        if (textInput) textInput.value = '';
+        const preview = document.getElementById('sig-preview');
+        if (preview) preview.textContent = 'Preview';
+
+        const intentCheck = document.getElementById('sig-intent');
+        const consentCheck = document.getElementById('sig-consent');
+        const nameInput = document.getElementById('sig-name');
+        const emailInput = document.getElementById('sig-email');
+        const applyBtn = document.getElementById('sig-apply');
+        if (intentCheck) intentCheck.checked = false;
+        if (consentCheck) consentCheck.checked = false;
+        if (nameInput) nameInput.value = '';
+        if (emailInput) emailInput.value = '';
+        if (applyBtn) applyBtn.disabled = true;
+
+        this.updateSignatureApplyState();
     }
 
     /**
@@ -580,37 +709,365 @@ class PDFEditorApp {
     }
 
     /**
+     * Export the PDF with annotations (shared logic)
+     * @returns {Promise<{ bytes: Uint8Array; exportName: string } | null>}
+     */
+    async getExportedPDF() {
+        if (!this.pdfHandler.isLoaded()) return null;
+
+        const annotations = this.canvasManager.getAllAnnotations();
+        const originalBytes = this.pdfHandler.getOriginalBytes();
+        const modifiedPdfBytes = await this.exporter.exportPDF(
+            originalBytes,
+            annotations,
+            this.currentScale
+        );
+
+        const baseName = (this.fileName || '').replace(/\.pdf$/i, '').trim();
+        const hasRealFilename = baseName && baseName !== 'document';
+        const exportName = hasRealFilename
+            ? `${baseName}-edited.pdf`
+            : `pdf-export-${Math.random().toString(36).slice(2, 10)}.pdf`;
+
+        return { bytes: modifiedPdfBytes, exportName };
+    }
+
+    /**
      * Export the PDF with annotations
      */
     async exportPDF() {
         if (!this.pdfHandler.isLoaded()) return;
 
         this.showLoading('Exporting PDF...');
-
         try {
-            const annotations = this.canvasManager.getAllAnnotations();
-            const originalBytes = this.pdfHandler.getOriginalBytes();
-
-            const modifiedPdfBytes = await this.exporter.exportPDF(
-                originalBytes,
-                annotations,
-                this.currentScale
-            );
-
-            // Generate filename: use loaded name if present, otherwise a unique random name
-            const baseName = (this.fileName || '').replace(/\.pdf$/i, '').trim();
-            const hasRealFilename = baseName && baseName !== 'document';
-            const exportName = hasRealFilename
-                ? `${baseName}-edited.pdf`
-                : `pdf-export-${Math.random().toString(36).slice(2, 10)}.pdf`;
-
-            this.exporter.downloadPDF(modifiedPdfBytes, exportName);
-            this.hideLoading();
+            const result = await this.getExportedPDF();
+            if (result) {
+                this.exporter.downloadPDF(result.bytes, result.exportName);
+            }
         } catch (error) {
             console.error('Export error:', error);
             alert('Error exporting PDF: ' + error.message);
+        } finally {
             this.hideLoading();
         }
+    }
+
+    /**
+     * Build context for email template placeholders
+     * @param {string} exportName
+     * @returns {{ filename: string; date: string; signatureSummary: string; signerNames: string; pageCount: number; documentHash: string }}
+     */
+    buildEmailContext(exportName) {
+        const annotations = this.canvasManager.getAllAnnotations();
+        const signatures = [];
+        const signerSet = new Set();
+
+        for (const page of annotations) {
+            for (const ann of page.annotations) {
+                if (ann.type === 'signature' && ann.object._signatureMeta) {
+                    const m = ann.object._signatureMeta;
+                    signatures.push({ name: m.signerName, ts: m.timestamp });
+                    if (m.signerName) signerSet.add(m.signerName);
+                }
+            }
+        }
+
+        const signatureSummary =
+            signatures.length === 0
+                ? 'No signatures.'
+                : signatures
+                      .map((s) => `- Signed by ${s.name || '—'} on ${s.timestamp ? new Date(s.timestamp).toLocaleString() : '—'}`)
+                      .join('\n');
+        const signerNames = [...signerSet].join(', ') || '—';
+
+        return {
+            filename: exportName,
+            date: new Date().toLocaleString(),
+            signatureSummary,
+            signerNames,
+            pageCount: this.pdfHandler.totalPages || 0,
+            documentHash: this.documentHash || ''
+        };
+    }
+
+    /**
+     * Send via email: download PDF, open mailto with template-filled subject/body
+     */
+    async sendViaEmail() {
+        if (!this.pdfHandler.isLoaded()) return;
+
+        const sel = document.getElementById('send-template-select');
+        const subjectEl = document.getElementById('send-subject');
+        const bodyEl = document.getElementById('send-body');
+        if (!sel || !subjectEl || !bodyEl) return;
+
+        const tpl = emailTemplates.getById(sel.value) || emailTemplates.getDefault();
+        const subject = (subjectEl.value || '').trim();
+        const body = (bodyEl.value || '').trim();
+        if (!subject || !body) {
+            alert('Please provide a subject and body.');
+            return;
+        }
+
+        this.showLoading('Preparing email...');
+        try {
+            const result = await this.getExportedPDF();
+            if (!result) {
+                this.hideLoading();
+                return;
+            }
+            this.exporter.downloadPDF(result.bytes, result.exportName);
+            const ctx = this.buildEmailContext(result.exportName);
+            const filled = emailTemplates.fill({ subject, body }, ctx);
+            const mailto = `mailto:?subject=${encodeURIComponent(filled.subject)}&body=${encodeURIComponent(filled.body)}`;
+            window.location.href = mailto;
+            this.hideSendModal();
+        } catch (error) {
+            console.error('Send error:', error);
+            alert('Error preparing email: ' + error.message);
+        } finally {
+            this.hideLoading();
+        }
+    }
+
+    /**
+     * Populate Send modal with default template and fill subject/body
+     */
+    refreshSendModal() {
+        const sel = document.getElementById('send-template-select');
+        const subjectEl = document.getElementById('send-subject');
+        const bodyEl = document.getElementById('send-body');
+        if (!sel || !subjectEl || !bodyEl) return;
+
+        const templates = emailTemplates.getTemplates();
+        const defaultTpl = emailTemplates.getDefault();
+
+        sel.innerHTML = templates.map((t) => `<option value="${t.id}" ${t.id === defaultTpl.id ? 'selected' : ''}>${escapeHtml(t.name)}</option>`).join('');
+
+        const baseName = (this.fileName || '').replace(/\.pdf$/i, '').trim();
+        const hasRealFilename = baseName && baseName !== 'document';
+        const exportName = hasRealFilename ? `${baseName}-edited.pdf` : 'document.pdf';
+        const ctx = this.buildEmailContext(exportName);
+        const filled = emailTemplates.fill(defaultTpl, ctx);
+        subjectEl.value = filled.subject;
+        bodyEl.value = filled.body;
+    }
+
+    showSendModal() {
+        if (!this.pdfHandler.isLoaded()) return;
+        this.refreshSendModal();
+        this.sendModal.classList.remove('hidden');
+    }
+
+    hideSendModal() {
+        this.sendModal.classList.add('hidden');
+    }
+
+    setupSendModal() {
+        const modal = this.sendModal;
+        const closeBtn = document.getElementById('send-modal-close');
+        const cancelBtn = document.getElementById('send-cancel');
+        const doBtn = document.getElementById('send-do');
+        const sel = document.getElementById('send-template-select');
+        const subjectEl = document.getElementById('send-subject');
+        const bodyEl = document.getElementById('send-body');
+        const manageLink = document.getElementById('send-manage-templates');
+
+        closeBtn?.addEventListener('click', () => this.hideSendModal());
+        cancelBtn?.addEventListener('click', () => this.hideSendModal());
+        doBtn?.addEventListener('click', () => this.sendViaEmail());
+
+        sel?.addEventListener('change', () => {
+            const t = emailTemplates.getById(sel.value);
+            if (!t) return;
+            const baseName = (this.fileName || '').replace(/\.pdf$/i, '').trim();
+            const hasRealFilename = baseName && baseName !== 'document';
+            const exportName = hasRealFilename ? `${baseName}-edited.pdf` : 'document.pdf';
+            const ctx = this.buildEmailContext(exportName);
+            const filled = emailTemplates.fill(t, ctx);
+            subjectEl.value = filled.subject;
+            bodyEl.value = filled.body;
+        });
+
+        manageLink?.addEventListener('click', (e) => {
+            e.preventDefault();
+            this.hideSendModal();
+            this.showTemplatesModal();
+        });
+
+        modal?.addEventListener('click', (e) => {
+            if (e.target === modal) this.hideSendModal();
+        });
+    }
+
+    showTemplatesModal() {
+        this.renderTemplatesList();
+        this.templatesModal.classList.remove('hidden');
+    }
+
+    hideTemplatesModal() {
+        this.templatesModal.classList.add('hidden');
+    }
+
+    renderTemplatesList() {
+        const list = document.getElementById('templates-list');
+        if (!list) return;
+
+        const store = emailTemplates.getTemplates();
+        const defaultId = emailTemplates.getDefault().id;
+
+        list.innerHTML = store
+            .map(
+                (t) =>
+                    `<li class="${t.id === defaultId ? 'default-item' : ''}" data-id="${escapeHtml(t.id)}">
+  <div class="tpl-info">
+    <span class="tpl-name">${escapeHtml(t.name)}</span>
+    <div class="tpl-meta">${escapeHtml(t.subject || '(no subject)')}</div>
+  </div>
+  <div class="tpl-actions">
+    <button type="button" class="tpl-btn edit-btn" data-id="${escapeHtml(t.id)}">Edit</button>${!t.builtin ? `<button type="button" class="tpl-btn delete-btn" data-id="${escapeHtml(t.id)}">Delete</button>` : ''}
+    ${t.id !== defaultId ? `<button type="button" class="tpl-btn set-default" data-id="${escapeHtml(t.id)}">Set default</button>` : ''}
+  </div>
+</li>`
+            )
+            .join('');
+
+        list.querySelectorAll('.edit-btn').forEach((btn) => {
+            btn.addEventListener('click', () => this.openTemplateEdit(btn.dataset.id));
+        });
+        list.querySelectorAll('.delete-btn').forEach((btn) => {
+            btn.addEventListener('click', () => this.deleteTemplate(btn.dataset.id));
+        });
+        list.querySelectorAll('.tpl-btn.set-default').forEach((btn) => {
+            btn.addEventListener('click', () => this.setDefaultTemplate(btn.dataset.id));
+        });
+    }
+
+    openTemplateEdit(id) {
+        const title = document.getElementById('template-edit-title');
+        const idEl = document.getElementById('tpl-edit-id');
+        const nameEl = document.getElementById('tpl-edit-name');
+        const subjectEl = document.getElementById('tpl-edit-subject');
+        const bodyEl = document.getElementById('tpl-edit-body');
+
+        if (id) {
+            const t = emailTemplates.getById(id);
+            if (!t) return;
+            title.textContent = 'Edit template';
+            idEl.value = t.id;
+            nameEl.value = t.name;
+            subjectEl.value = t.subject || '';
+            bodyEl.value = t.body || '';
+        } else {
+            title.textContent = 'Add template';
+            idEl.value = '';
+            nameEl.value = '';
+            subjectEl.value = '{{filename}}';
+            bodyEl.value = `Please find attached {{filename}}.\n\nDocument summary:\n- Pages: {{pageCount}}\n{{signatureSummary}}\n{{documentHash}}\n\n{{attachmentNote}}`;
+        }
+        this.templateEditModal.classList.remove('hidden');
+    }
+
+    saveTemplateEdit() {
+        const idEl = document.getElementById('tpl-edit-id');
+        const nameEl = document.getElementById('tpl-edit-name');
+        const subjectEl = document.getElementById('tpl-edit-subject');
+        const bodyEl = document.getElementById('tpl-edit-body');
+        const id = (idEl?.value || '').trim();
+        const name = (nameEl?.value || '').trim();
+        const subject = subjectEl?.value || '';
+        const body = bodyEl?.value || '';
+
+        if (!name) {
+            alert('Please enter a template name.');
+            return;
+        }
+
+        if (id) {
+            emailTemplates.update(id, { name, subject, body });
+        } else {
+            emailTemplates.add({ name, subject, body });
+        }
+        this.hideTemplateEditModal();
+        this.renderTemplatesList();
+        this.refreshSendModal();
+    }
+
+    hideTemplateEditModal() {
+        this.templateEditModal.classList.add('hidden');
+    }
+
+    deleteTemplate(id) {
+        if (!id || !confirm('Delete this template?')) return;
+        emailTemplates.remove(id);
+        this.renderTemplatesList();
+        this.refreshSendModal();
+    }
+
+    setDefaultTemplate(id) {
+        if (!id) return;
+        emailTemplates.setDefault(id);
+        this.renderTemplatesList();
+        this.refreshSendModal();
+    }
+
+    setupTemplatesModal() {
+        const modal = this.templatesModal;
+        const closeBtn = document.getElementById('templates-modal-close');
+        const addBtn = document.getElementById('tpl-add');
+        const exportBtn = document.getElementById('tpl-export');
+        const importInput = document.getElementById('tpl-import-input');
+
+        closeBtn?.addEventListener('click', () => this.hideTemplatesModal());
+        addBtn?.addEventListener('click', () => this.openTemplateEdit(null));
+        exportBtn?.addEventListener('click', () => {
+            const json = emailTemplates.exportJson();
+            const blob = new Blob([json], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `free-pdf-email-templates-${new Date().toISOString().slice(0, 10)}.json`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+        });
+        importInput?.addEventListener('change', async (e) => {
+            const f = e.target.files?.[0];
+            if (!f) return;
+            const replaceCb = document.getElementById('tpl-import-replace-cb');
+            const replace = !!replaceCb?.checked;
+            try {
+                const text = await f.text();
+                const { imported, errors } = emailTemplates.importJson(text, { replace });
+                if (errors.length) alert(`Import completed with issues:\n${errors.join('\n')}`);
+                else alert(`Imported ${imported} template(s).`);
+                this.renderTemplatesList();
+                this.refreshSendModal();
+            } catch (err) {
+                alert('Import failed: ' + (err.message || 'Invalid file'));
+            }
+            importInput.value = '';
+        });
+
+        modal?.addEventListener('click', (e) => {
+            if (e.target === modal) this.hideTemplatesModal();
+        });
+    }
+
+    setupTemplateEditModal() {
+        const closeBtn = document.getElementById('template-edit-close');
+        const cancelBtn = document.getElementById('tpl-edit-cancel');
+        const saveBtn = document.getElementById('tpl-edit-save');
+        const modal = this.templateEditModal;
+
+        closeBtn?.addEventListener('click', () => this.hideTemplateEditModal());
+        cancelBtn?.addEventListener('click', () => this.hideTemplateEditModal());
+        saveBtn?.addEventListener('click', () => this.saveTemplateEdit());
+
+        modal?.addEventListener('click', (e) => {
+            if (e.target === modal) this.hideTemplateEditModal();
+        });
     }
 
     /**

@@ -16,7 +16,7 @@ Create a **free, privacy-focused PDF editing tool** that:
 - **Text Boxes** - Add text annotations anywhere on the PDF
 - **Whiteout/Redaction** - Cover existing content with white rectangles
 - **Freehand Drawing** - Draw signatures and annotations directly on the document
-- **Digital Signatures** - Create and insert signatures (drawn or typed)
+- **Digital Signatures** - Create and insert signatures (drawn or typed). Supports intent/consent, signer identity, timestamps, and an embedded audit trail. The document’s SHA-256 hash is computed on load and stored for association.
 
 ### Form Fields
 - **Text Input Fields** - Add fillable text fields
@@ -29,6 +29,12 @@ Create a **free, privacy-focused PDF editing tool** that:
 
 ### Export
 - Download edited PDF with all annotations flattened into the document
+- **Send via email** – Download the PDF and open your email client with a template-filled subject and body. Attach the downloaded file and send. Uses configurable **email templates** (see below).
+
+### Email templates
+- **Templates** are stored locally (localStorage). Use **Templates** in the toolbar to add, edit, delete, and set a default.
+- **Placeholders** in subject/body: `{{filename}}`, `{{date}}`, `{{signatureSummary}}`, `{{signerNames}}`, `{{pageCount}}`, `{{documentHash}}`, `{{attachmentNote}}`.
+- **Export** – Download templates as a JSON file. **Import** – Merge from a JSON file; optionally **Replace existing** to overwrite all templates. Use export/import to sync templates across devices (e.g. copy the file via cloud or USB).
 
 ## Technical Architecture
 
@@ -60,7 +66,8 @@ free-pdf/
 │   ├── pdf-handler.js  # PDF loading and rendering logic
 │   ├── canvas-manager.js # Fabric.js canvas management
 │   ├── signature-pad.js  # Signature drawing/typing
-│   └── export.js       # PDF export functionality
+│   ├── export.js       # PDF export functionality
+│   └── email-templates.js # Email template storage, placeholders, import/export
 └── README.md           # This file
 ```
 

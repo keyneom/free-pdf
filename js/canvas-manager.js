@@ -22,6 +22,7 @@ export class CanvasManager {
 
         // Signature data
         this.signatureImage = null;
+        this.signatureMeta = null;
     }
 
     /**
@@ -382,16 +383,24 @@ export class CanvasManager {
     }
 
     /**
-     * Set a signature image to be inserted
+     * Set a signature image and metadata to be inserted
+     * @param {string} dataUrl - Signature image data URL
+     * @param {Object} meta - Audit metadata (signerName, signerEmail?, intentAccepted, consentAccepted, documentFilename, documentHash?)
      */
-    setSignature(dataUrl) {
+    setSignature(dataUrl, meta) {
         this.signatureImage = dataUrl;
+        this.signatureMeta = meta || null;
     }
 
     /**
      * Insert the signature at the specified position
      */
     insertSignature(canvas, x, y) {
+        if (!this.signatureImage) return;
+
+        const meta = this.signatureMeta ? { ...this.signatureMeta } : {};
+        meta.timestamp = new Date().toISOString();
+
         fabric.Image.fromURL(this.signatureImage, (img) => {
             // Scale signature to reasonable size
             const maxWidth = 200 / this.currentScale;
@@ -403,7 +412,8 @@ export class CanvasManager {
                 scaleX: scale,
                 scaleY: scale,
                 selectable: true,
-                _annotationType: 'signature'
+                _annotationType: 'signature',
+                _signatureMeta: meta
             });
 
             canvas.add(img);
@@ -478,7 +488,7 @@ export class CanvasManager {
         const history = this.history.get(pageNum);
         if (!canvas || !history) return;
 
-        const state = JSON.stringify(canvas.toJSON(['_annotationType', '_checked', '_fieldValue']));
+        const state = JSON.stringify(canvas.toJSON(['_annotationType', '_checked', '_fieldValue', '_signatureMeta']));
         history.undoStack.push(state);
         history.redoStack = []; // Clear redo stack on new action
 
@@ -571,7 +581,7 @@ export class CanvasManager {
             canvas.forEachObject((obj) => {
                 pageAnnotations.push({
                     type: obj._annotationType || obj.type,
-                    data: obj.toJSON(['_annotationType', '_checked', '_fieldValue']),
+                    data: obj.toJSON(['_annotationType', '_checked', '_fieldValue', '_signatureMeta']),
                     object: obj
                 });
             });

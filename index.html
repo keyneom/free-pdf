@@ -82,6 +82,14 @@
                     <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M19 12v7H5v-7H3v7c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2v-7h-2zm-6 .67l2.59-2.58L17 11.5l-5 5-5-5 1.41-1.41L11 12.67V3h2v9.67z"/></svg>
                     <span>Download</span>
                 </button>
+                <button id="btn-send" class="tool-btn primary" title="Send via email" disabled>
+                    <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg>
+                    <span>Send</span>
+                </button>
+                <button id="btn-templates" class="tool-btn" title="Email templates">
+                    <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-5 14H7v-2h7v2zm3-4H7v-2h10v2zm0-4H7V7h10v2z"/></svg>
+                    <span>Templates</span>
+                </button>
             </div>
         </header>
 
@@ -149,6 +157,32 @@
                     <button class="modal-close" id="signature-modal-close">&times;</button>
                 </div>
                 <div class="modal-body">
+                    <p class="sig-disclosure" id="sig-disclosure">
+                        By signing electronically, you consent to use electronic records and signatures. Your name and signing date will be stored in the document. You may request a paper copy.
+                    </p>
+                    <div class="sig-checkboxes">
+                        <label class="sig-checkbox-label">
+                            <input type="checkbox" id="sig-intent" name="sig-intent">
+                            I agree to sign this document.
+                        </label>
+                        <label class="sig-checkbox-label">
+                            <input type="checkbox" id="sig-consent" name="sig-consent">
+                            I consent to use electronic signatures and records.
+                        </label>
+                    </div>
+                    <div class="sig-identity">
+                        <div class="sig-field">
+                            <label for="sig-name">Signer name <span class="required">*</span></label>
+                            <input type="text" id="sig-name" placeholder="Full name" class="sig-input" required>
+                        </div>
+                        <div class="sig-field">
+                            <label for="sig-email">Email <span class="optional">(optional)</span></label>
+                            <input type="email" id="sig-email" placeholder="email@example.com" class="sig-input">
+                        </div>
+                    </div>
+                    <p class="sig-privacy" id="sig-privacy">
+                        Your details are stored only in the downloaded PDF. Nothing is uploaded to any server.
+                    </p>
                     <div class="signature-tabs">
                         <button class="sig-tab active" data-tab="draw">Draw</button>
                         <button class="sig-tab" data-tab="type">Type</button>
@@ -171,7 +205,89 @@
                 </div>
                 <div class="modal-footer">
                     <button id="sig-cancel" class="btn btn-secondary">Cancel</button>
-                    <button id="sig-apply" class="btn btn-primary">Insert Signature</button>
+                    <button id="sig-apply" class="btn btn-primary" disabled>Insert Signature</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Send via Email Modal -->
+        <div id="send-modal" class="modal hidden">
+            <div class="modal-content modal-content--wide">
+                <div class="modal-header">
+                    <h3>Send via email</h3>
+                    <button class="modal-close" id="send-modal-close">&times;</button>
+                </div>
+                <div class="modal-body">
+                    <div class="send-template-row">
+                        <label for="send-template-select">Template</label>
+                        <select id="send-template-select" class="send-select"></select>
+                    </div>
+                    <div class="send-field">
+                        <label for="send-subject">Subject</label>
+                        <input type="text" id="send-subject" class="send-input" placeholder="Email subject">
+                    </div>
+                    <div class="send-field">
+                        <label for="send-body">Body</label>
+                        <textarea id="send-body" class="send-textarea" rows="10" placeholder="Email body"></textarea>
+                    </div>
+                    <p class="send-hint"><strong>Important:</strong> The PDF will be downloaded automatically. Your email app will open with this subject and body. <strong>You MUST manually attach the downloaded PDF file to the email before sending.</strong> Make sure to attach the file that was just downloaded—do not attach a different version.</p>
+                    <p class="send-footer-note"><a href="#" id="send-manage-templates" class="send-link">Manage email templates</a></p>
+                </div>
+                <div class="modal-footer">
+                    <button id="send-cancel" class="btn btn-secondary">Cancel</button>
+                    <button id="send-do" class="btn btn-primary">Download PDF &amp; open email</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Email Templates Modal -->
+        <div id="templates-modal" class="modal hidden">
+            <div class="modal-content modal-content--wide">
+                <div class="modal-header">
+                    <h3>Email templates</h3>
+                    <button class="modal-close" id="templates-modal-close">&times;</button>
+                </div>
+                <div class="modal-body">
+                    <div class="templates-toolbar">
+                        <button id="tpl-add" class="btn btn-primary">Add template</button>
+                        <button id="tpl-export" class="btn btn-secondary">Export</button>
+                        <label class="btn btn-secondary" for="tpl-import-input">Import</label>
+                        <input type="file" id="tpl-import-input" accept=".json,application/json" hidden>
+                        <label class="tpl-import-replace">
+                            <input type="checkbox" id="tpl-import-replace-cb"> Replace existing
+                        </label>
+                    </div>
+                    <ul id="templates-list" class="templates-list"></ul>
+                    <p class="templates-placeholders">Placeholders: {{filename}}, {{date}}, {{signatureSummary}}, {{signerNames}}, {{pageCount}}, {{documentHash}}, {{attachmentNote}}</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Template Edit Modal (add/edit) -->
+        <div id="template-edit-modal" class="modal hidden">
+            <div class="modal-content modal-content--wide">
+                <div class="modal-header">
+                    <h3 id="template-edit-title">Add template</h3>
+                    <button class="modal-close" id="template-edit-close">&times;</button>
+                </div>
+                <div class="modal-body">
+                    <input type="hidden" id="tpl-edit-id" value="">
+                    <div class="send-field">
+                        <label for="tpl-edit-name">Name</label>
+                        <input type="text" id="tpl-edit-name" class="send-input" placeholder="e.g. Contract submission">
+                    </div>
+                    <div class="send-field">
+                        <label for="tpl-edit-subject">Subject</label>
+                        <input type="text" id="tpl-edit-subject" class="send-input" placeholder="{{filename}}">
+                    </div>
+                    <div class="send-field">
+                        <label for="tpl-edit-body">Body</label>
+                        <textarea id="tpl-edit-body" class="send-textarea" rows="10" placeholder="Use placeholders: {{filename}}, {{date}}, ..."></textarea>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button id="tpl-edit-cancel" class="btn btn-secondary">Cancel</button>
+                    <button id="tpl-edit-save" class="btn btn-primary">Save</button>
                 </div>
             </div>
         </div>

@@ -380,13 +380,16 @@ body {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 16px 20px;
+    padding: 18px 22px;
     border-bottom: 1px solid var(--border-color);
+    background: var(--surface-color);
 }
 
 .modal-header h3 {
     font-size: 1.125rem;
     font-weight: 600;
+    letter-spacing: -0.01em;
+    color: var(--text-color);
 }
 
 .modal-close {
@@ -395,36 +398,44 @@ body {
     font-size: 1.5rem;
     cursor: pointer;
     color: var(--text-secondary);
-    padding: 0;
+    padding: 2px;
     line-height: 1;
+    border-radius: var(--radius-sm);
+    transition: color 0.15s ease, background 0.15s ease;
 }
 
 .modal-close:hover {
     color: var(--text-color);
+    background: var(--bg-color);
 }
 
 .modal-body {
-    padding: 20px;
+    padding: 22px;
+    background: var(--surface-color);
 }
 
 .modal-footer {
     display: flex;
     justify-content: flex-end;
-    gap: 12px;
-    padding: 16px 20px;
+    gap: 10px;
+    padding: 16px 22px;
     border-top: 1px solid var(--border-color);
     background: var(--bg-color);
 }
 
 /* Buttons */
 .btn {
-    padding: 10px 20px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 10px 18px;
     border: none;
     border-radius: var(--radius-md);
     font-size: 0.875rem;
     font-weight: 500;
     cursor: pointer;
-    transition: all 0.15s ease;
+    font-family: inherit;
+    transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
 }
 
 .btn-primary {
@@ -437,16 +448,90 @@ body {
 }
 
 .btn-secondary {
-    background: var(--bg-color);
+    background: var(--surface-color);
     color: var(--text-color);
     border: 1px solid var(--border-color);
 }
 
 .btn-secondary:hover {
-    background: var(--border-color);
+    background: var(--bg-color);
+    border-color: #d1d5db;
+}
+
+label.btn {
+    user-select: none;
 }
 
 /* Signature Modal */
+.sig-disclosure {
+    font-size: 0.9rem;
+    color: var(--text-muted, #555);
+    margin: 0 0 12px;
+    line-height: 1.4;
+}
+
+.sig-checkboxes {
+    margin-bottom: 16px;
+}
+
+.sig-checkbox-label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 0.9rem;
+    cursor: pointer;
+    margin-bottom: 8px;
+}
+
+.sig-checkbox-label input[type="checkbox"] {
+    width: auto;
+    margin: 0;
+}
+
+.sig-identity {
+    margin-bottom: 12px;
+}
+
+.sig-field {
+    margin-bottom: 10px;
+}
+
+.sig-field label {
+    display: block;
+    font-size: 0.875rem;
+    font-weight: 500;
+    margin-bottom: 4px;
+}
+
+.sig-field .required {
+    color: #c00;
+}
+
+.sig-field .optional {
+    font-weight: normal;
+    color: var(--text-muted, #666);
+}
+
+.sig-input {
+    width: 100%;
+    padding: 8px 12px;
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    font-size: 0.95rem;
+}
+
+.sig-input:focus {
+    outline: none;
+    border-color: var(--primary-color);
+}
+
+.sig-privacy {
+    font-size: 0.8rem;
+    color: var(--text-muted, #666);
+    margin: 0 0 16px;
+    line-height: 1.3;
+}
+
 .signature-tabs {
     display: flex;
     gap: 8px;
@@ -548,6 +633,244 @@ body {
 .sig-preview.formal {
     font-family: 'Times New Roman', serif;
     font-style: italic;
+}
+
+/* Send via Email Modal */
+.modal-content--wide {
+    max-width: 560px;
+    box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 8px 10px -6px rgba(0, 0, 0, 0.1);
+}
+
+.send-template-row,
+.send-field {
+    margin-bottom: 16px;
+}
+
+.send-template-row:last-of-type,
+.send-field:last-of-type {
+    margin-bottom: 0;
+}
+
+.send-template-row label,
+.send-field label {
+    display: block;
+    font-size: 0.875rem;
+    font-weight: 500;
+    color: var(--text-color);
+    margin-bottom: 6px;
+}
+
+.send-select,
+.send-input,
+.send-textarea {
+    width: 100%;
+    padding: 10px 12px;
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    font-size: 0.9375rem;
+    font-family: inherit;
+    color: var(--text-color);
+    background: var(--surface-color);
+    transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.send-select:focus,
+.send-input:focus,
+.send-textarea:focus {
+    outline: none;
+    border-color: var(--primary-color);
+    box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
+}
+
+.send-select {
+    cursor: pointer;
+    appearance: none;
+    background-color: var(--surface-color);
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%236b7280' d='M6 8L1 3h10z'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 12px center;
+    padding-right: 36px;
+}
+
+.send-textarea {
+    resize: vertical;
+    min-height: 140px;
+    line-height: 1.5;
+}
+
+.send-hint {
+    font-size: 0.8125rem;
+    color: var(--text-color);
+    line-height: 1.6;
+    margin: 16px 0 0;
+    padding: 14px 16px;
+    background: #fff3cd;
+    border-radius: var(--radius-md);
+    border: 2px solid #ffc107;
+}
+
+.send-footer-note {
+    margin-top: 16px;
+    padding-top: 14px;
+    border-top: 1px solid var(--border-color);
+}
+
+.send-link {
+    color: var(--primary-color);
+    text-decoration: none;
+    font-size: 0.875rem;
+    font-weight: 500;
+    transition: color 0.15s ease;
+}
+
+.send-link:hover {
+    color: var(--primary-hover);
+    text-decoration: underline;
+}
+
+/* Email Templates Modal */
+.templates-toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 20px;
+    padding-bottom: 16px;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.templates-toolbar .btn {
+    flex-shrink: 0;
+}
+
+.tpl-import-replace {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 0.8125rem;
+    color: var(--text-secondary);
+    cursor: pointer;
+    margin-left: 4px;
+}
+
+.tpl-import-replace:hover {
+    color: var(--text-color);
+}
+
+.tpl-import-replace input[type="checkbox"] {
+    margin: 0;
+    width: 14px;
+    height: 14px;
+    cursor: pointer;
+}
+
+.templates-list {
+    list-style: none;
+    padding: 0;
+    margin: 0 0 20px;
+}
+
+.templates-list li {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 14px 16px;
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    margin-bottom: 10px;
+    background: var(--surface-color);
+    transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.templates-list li:hover {
+    border-color: #d1d5db;
+}
+
+.templates-list li.default-item {
+    border-color: rgba(37, 99, 235, 0.4);
+    background: linear-gradient(to bottom, rgba(37, 99, 235, 0.04), var(--surface-color));
+}
+
+.templates-list li .tpl-info {
+    flex: 1;
+    min-width: 0;
+}
+
+.templates-list .tpl-name {
+    font-weight: 500;
+    font-size: 0.9375rem;
+    color: var(--text-color);
+}
+
+.templates-list .tpl-meta {
+    font-size: 0.8125rem;
+    color: var(--text-secondary);
+    margin-top: 2px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.templates-list .tpl-actions {
+    display: flex;
+    flex-shrink: 0;
+    gap: 6px;
+}
+
+.templates-list .tpl-btn {
+    padding: 6px 12px;
+    font-size: 0.8125rem;
+    font-weight: 500;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border-color);
+    background: var(--surface-color);
+    color: var(--text-color);
+    cursor: pointer;
+    font-family: inherit;
+    transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+
+.templates-list .tpl-btn:hover {
+    background: var(--bg-color);
+    border-color: #d1d5db;
+}
+
+.templates-list .tpl-btn.edit-btn {
+    border-color: var(--primary-color);
+    color: var(--primary-color);
+}
+
+.templates-list .tpl-btn.edit-btn:hover {
+    background: rgba(37, 99, 235, 0.08);
+}
+
+.templates-list .tpl-btn.delete-btn:hover {
+    border-color: #dc2626;
+    color: #dc2626;
+    background: rgba(220, 38, 38, 0.06);
+}
+
+.templates-list .tpl-btn.set-default {
+    background: var(--primary-color);
+    color: white;
+    border-color: var(--primary-color);
+}
+
+.templates-list .tpl-btn.set-default:hover {
+    background: var(--primary-hover);
+    border-color: var(--primary-hover);
+}
+
+.templates-placeholders {
+    font-size: 0.8125rem;
+    color: var(--text-secondary);
+    margin: 0;
+    line-height: 1.5;
+    padding: 12px 14px;
+    background: var(--bg-color);
+    border-radius: var(--radius-md);
+    border: 1px solid var(--border-color);
 }
 
 /* Loading Overlay */
