@@ -45,6 +45,9 @@
                 <button id="btn-draw" class="tool-btn" title="Freehand Draw (D)" data-tool="draw">
                     <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.84 1.83 3.75 3.75M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25z"/></svg>
                 </button>
+                <button id="btn-eraser" class="tool-btn" title="Eraser" data-tool="eraser">
+                    <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M16.24 3c-.27 0-.52.11-.71.29L3 15.82V21h5.18L20.71 8.47c.39-.39.39-1.02 0-1.41l-3.76-3.76A.996.996 0 0 0 16.24 3zM7.35 19H5v-2.35l9.9-9.9 2.35 2.35-9.9 9.9zM19 19v2H11v-2h8z"/></svg>
+                </button>
 
                 <button id="btn-signature" class="tool-btn" title="Signature (S)" data-tool="signature">
                     <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M7 22v-2h14v2H7zm0-4v-2h14v2H7zm-5-4c.7 0 1.4-.2 2-.6l1.5 1.5c-1 .7-2.2 1.1-3.5 1.1v-2zm1.5-1.5L2 11c.4-.6.6-1.3.6-2H4.6c0 1.3-.4 2.5-1.1 3.5zM2 7c0-.7.2-1.4.6-2l1.5 1.5C3.4 6.8 3 7.4 3 8H1.1c-.1-.3-.1-.7-.1-1zm5-5h2v2c-.7 0-1.4.2-2 .6L5.5 3.1c.6-.4 1.3-.7 2-.8V2h.5zM4.1 3.1L5.6 4.6C5.2 5.2 5 5.8 5 6.5H3c0-1.3.4-2.5 1.1-3.4zm5.4 6.4c-.6.4-1.2.6-1.9.6L7.6 8.6c.3-.2.6-.4.8-.7l1.1 1.6z"/></svg>
@@ -52,12 +55,50 @@
 
                 <div class="divider"></div>
 
+                <button id="btn-highlight" class="tool-btn" title="Highlight" data-tool="highlight">
+                    <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M6 14l3 3 9-9-3-3-9 9zm-2 6h6v-2H4v2z"/></svg>
+                </button>
+                <button id="btn-underline" class="tool-btn" title="Underline" data-tool="underline">
+                    <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M6 3v7a6 6 0 0 0 12 0V3h-2v7a4 4 0 0 1-8 0V3H6zm-2 18v-2h16v2H4z"/></svg>
+                </button>
+                <button id="btn-strike" class="tool-btn" title="Strikethrough" data-tool="strike">
+                    <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M10 19h4v-2h-4c-1.1 0-2-.9-2-2h10v-2H4v2h2c0 2.21 1.79 4 4 4zm2-14c1.66 0 3 1.34 3 3h2c0-2.76-2.24-5-5-5H7v2h5z"/></svg>
+                </button>
+                <button id="btn-rect" class="tool-btn" title="Rectangle" data-tool="rect">
+                    <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M4 6h16v12H4V6zm2 2v8h12V8H6z"/></svg>
+                </button>
+                <button id="btn-ellipse" class="tool-btn" title="Ellipse" data-tool="ellipse">
+                    <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M12 4c-4.42 0-8 3.58-8 8s3.58 8 8 8 8-3.58 8-8-3.58-8-8-8zm0 14c-3.31 0-6-2.69-6-6s2.69-6 6-6 6 2.69 6 6-2.69 6-6 6z"/></svg>
+                </button>
+                <button id="btn-arrow" class="tool-btn" title="Arrow" data-tool="arrow">
+                    <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M4 12h12l-4-4 1.41-1.41L20.83 12l-7.42 7.41L12 18l4-4H4v-2z"/></svg>
+                </button>
+                <button id="btn-note" class="tool-btn" title="Note" data-tool="note">
+                    <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M21 6h-2v9H7l-4 4V6c0-1.1.9-2 2-2h16v2z"/></svg>
+                </button>
+                <button id="btn-stamp" class="tool-btn" title="Stamp" data-tool="stamp">
+                    <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M17 4H7v5a5 5 0 0 0 10 0V4zm-2 5a3 3 0 0 1-6 0V6h6v3zM5 20h14v-2H5v2zm1-6h12v2H6v-2z"/></svg>
+                </button>
+                <button id="btn-image" class="tool-btn" title="Insert Image" data-tool="image">
+                    <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M21 19V5c0-1.1-.9-2-2-2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2zM8.5 13.5l2.5 3 3.5-4.5L19 18H5l3.5-4.5z"/></svg>
+                </button>
+
                 <button id="btn-textfield" class="tool-btn" title="Form Text Field" data-tool="textfield">
                     <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M4 7v2h16V7H4zm0 6h16v-2H4v2zm0 4h16v-2H4v2z"/></svg>
                 </button>
 
                 <button id="btn-checkbox" class="tool-btn" title="Form Checkbox" data-tool="checkbox">
                     <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 16H5V5h14v14zM17.99 9l-1.41-1.42-6.59 6.59-2.58-2.57-1.42 1.41 4 3.99z"/></svg>
+                </button>
+
+                <button id="btn-radio" class="tool-btn" title="Form Radio" data-tool="radio">
+                    <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M12 20a8 8 0 1 1 0-16 8 8 0 0 1 0 16zm0-14a6 6 0 1 0 0 12 6 6 0 0 0 0-12zm0 9a3 3 0 1 1 0-6 3 3 0 0 1 0 6z"/></svg>
+                </button>
+                <button id="btn-dropdown" class="tool-btn" title="Form Dropdown" data-tool="dropdown">
+                    <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M5 7h14v4H5V7zm0 6h14v4H5v-4zm10 1l-3 3-3-3h6z"/></svg>
+                </button>
+                <button id="btn-date" class="tool-btn" title="Form Date Field" data-tool="date">
+                    <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M7 11h2v2H7v-2zm4 0h2v2h-2v-2zm4 0h2v2h-2v-2zM19 4h-1V2h-2v2H8V2H6v2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 16H5V9h14v11z"/></svg>
                 </button>
             </div>
 
@@ -144,10 +185,37 @@
                     </div>
                 </div>
 
-                <!-- Scrollable PDF Area -->
-                <div class="pdf-scroll-area" id="pdf-scroll-area">
-                    <div class="pdf-pages" id="pdf-pages">
-                        <!-- PDF pages will be rendered here -->
+                <div class="pdf-workspace">
+                    <!-- Pages Sidebar -->
+                    <aside class="pages-sidebar" id="pages-sidebar" aria-label="Pages">
+                        <div class="pages-sidebar-header">
+                            <div class="pages-sidebar-title">Pages</div>
+                            <div class="pages-sidebar-actions">
+                                <label class="pages-btn" for="pages-append-input" title="Append pages from another PDF">
+                                    Append
+                                </label>
+                                <input type="file" id="pages-append-input" accept=".pdf" hidden>
+                            </div>
+                        </div>
+                        <div class="pages-sidebar-toolbar">
+                            <button type="button" class="pages-btn" id="pages-delete-btn" disabled>Delete</button>
+                            <button type="button" class="pages-btn" id="pages-extract-btn" disabled>Extract</button>
+                            <button type="button" class="pages-btn" id="pages-split-btn">Split…</button>
+                            <button type="button" class="pages-btn" id="pages-rotate-btn" title="Rotate selected (or current) page(s) 90°. Shown in main view and thumbnails.">Rotate</button>
+                        </div>
+                        <div class="pages-list" id="pages-list" role="list">
+                            <!-- Thumbnails injected here -->
+                        </div>
+                        <div class="pages-sidebar-footer">
+                            <small class="pages-hint">Drag to reorder. Select pages to delete/extract/rotate.</small>
+                        </div>
+                    </aside>
+
+                    <!-- Scrollable PDF Area -->
+                    <div class="pdf-scroll-area" id="pdf-scroll-area">
+                        <div class="pdf-pages" id="pdf-pages">
+                            <!-- PDF pages will be rendered here -->
+                        </div>
                     </div>
                 </div>
             </div>
