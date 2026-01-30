@@ -255,6 +255,47 @@ body {
     border-bottom: 1px solid var(--border-color);
 }
 
+/* Signing flow banner: multi-signer detection */
+.signing-flow-banner {
+    padding: 10px 16px;
+    background: var(--success-bg, #e8f5e9);
+    border-bottom: 1px solid var(--border-color);
+    font-size: 0.875rem;
+    color: var(--text-primary);
+}
+
+.signing-flow-banner.hidden {
+    display: none;
+}
+
+.signing-flow-banner-content {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.signing-flow-banner-icon {
+    color: var(--success-color, #0a7c42);
+    font-weight: bold;
+}
+
+.signing-flow-set-btn {
+    margin-left: auto;
+    padding: 4px 10px;
+    font-size: 0.75rem;
+    border: 1px solid var(--border-color);
+    background: white;
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    color: var(--text-secondary);
+}
+
+.signing-flow-set-btn:hover {
+    background: var(--bg-color);
+    color: var(--text-primary);
+}
+
 .nav-btn {
     display: flex;
     align-items: center;
@@ -942,6 +983,16 @@ label.btn {
     line-height: 1.5;
 }
 
+.send-to-hint {
+    font-size: 0.8125rem;
+    color: var(--text-secondary);
+    margin: 8px 0 0;
+}
+
+.send-to-hint.hidden {
+    display: none;
+}
+
 .send-hint {
     font-size: 0.8125rem;
     color: var(--text-color);
@@ -1492,4 +1543,173 @@ label[for="tpl-import-input"].disabled {
     font-size: 0.875rem;
     color: var(--text-secondary);
     text-align: center;
+}
+
+/* Expected signers modal list */
+.expected-signers-toolbar {
+    margin-bottom: 12px;
+}
+
+.expected-signers-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    max-height: 280px;
+    overflow-y: auto;
+    margin-bottom: 8px;
+}
+
+.expected-signers-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+
+.expected-signers-ordinal {
+    flex-shrink: 0;
+    width: 1.5em;
+    font-size: 0.875rem;
+    color: var(--text-secondary);
+}
+
+.expected-signers-name {
+    min-width: 120px;
+    flex: 1;
+}
+
+.expected-signers-email {
+    min-width: 160px;
+    flex: 1;
+}
+
+.expected-signers-remove {
+    flex-shrink: 0;
+    padding: 6px 10px;
+    font-size: 0.8rem;
+}
+
+.bulk-fill-email-section {
+    margin-top: 24px;
+    padding: 16px;
+    background: var(--bg-color);
+    border-radius: var(--radius-md);
+}
+
+.bulk-fill-email-section h4 {
+    margin: 0 0 8px 0;
+    font-size: 1rem;
+    font-weight: 600;
+}
+
+.bulk-fill-email-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 16px;
+    margin-top: 12px;
+}
+
+.bulk-fill-email-row .send-field {
+    flex: 1;
+    min-width: 180px;
+}
+
+.bulk-fill-select {
+    width: 100%;
+}
+
+.bulk-fill-rows {
+    margin-top: 16px;
+}
+
+.bulk-fill-rows h4 {
+    margin: 0 0 8px 0;
+    font-size: 1rem;
+    font-weight: 600;
+}
+
+.bulk-fill-rows-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    max-height: 280px;
+    overflow-y: auto;
+    margin-top: 12px;
+}
+
+.bulk-fill-row-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 10px 12px;
+    background: white;
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    flex-wrap: wrap;
+}
+
+.bulk-fill-row-label {
+    flex: 1;
+    min-width: 0;
+    font-size: 0.875rem;
+    color: var(--text-primary);
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.bulk-fill-row-email-input {
+    min-width: 160px;
+    max-width: 220px;
+    padding: 6px 10px;
+    font-size: 0.8rem;
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-sm);
+}
+
+.bulk-fill-row-email-input::placeholder {
+    color: var(--text-secondary);
+}
+
+.bulk-fill-row-actions {
+    display: flex;
+    gap: 8px;
+    flex-shrink: 0;
+}
+
+.bulk-fill-row-actions .btn {
+    padding: 6px 12px;
+    font-size: 0.8rem;
+}
+
+.bulk-fill-row-sent-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 0.8rem;
+    color: var(--success-color, #0a7c42);
+    font-weight: 500;
+    margin-right: 4px;
+}
+
+.bulk-fill-row-item.bulk-fill-row-sent .bulk-fill-row-sent-badge {
+    display: inline-flex;
+}
+
+.bulk-fill-rows-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-top: 12px;
+    margin-bottom: 8px;
+}
+
+.bulk-fill-rows-toolbar .btn {
+    padding: 8px 16px;
+    font-size: 0.875rem;
+}
+
+.bulk-fill-send-all-status {
+    font-size: 0.8rem;
+    color: var(--text-secondary);
 }

@@ -13,7 +13,8 @@ const PLACEHOLDERS = [
     '{{signerNames}}',
     '{{pageCount}}',
     '{{documentHash}}',
-    '{{attachmentNote}}'
+    '{{attachmentNote}}',
+    '{{editLink}}'
 ];
 
 const DEFAULT_TEMPLATE = {
@@ -21,6 +22,8 @@ const DEFAULT_TEMPLATE = {
     name: 'Default',
     subject: '{{filename}}',
     body: `Please find attached {{filename}}.
+
+You can view, edit, and sign the document here and send it back: {{editLink}}
 
 This document may contain electronic signatures; where present, signer identity, date, and document association are recorded.
 
@@ -174,6 +177,10 @@ export const emailTemplates = {
             ctx.attachmentNote != null
                 ? ctx.attachmentNote
                 : `IMPORTANT: You must manually attach the PDF file (${ctx.filename || 'file'}) that was just downloaded to this email before sending. Do not attach a different version of the file.`;
+        const editLink =
+            ctx.editLink != null
+                ? ctx.editLink
+                : (typeof window !== 'undefined' && window.location ? (window.location.origin + window.location.pathname).replace(/\/$/, '') : '');
         const map = {
             '{{filename}}': ctx.filename ?? '',
             '{{date}}': ctx.date ?? new Date().toLocaleString(),
@@ -181,7 +188,8 @@ export const emailTemplates = {
             '{{signerNames}}': ctx.signerNames ?? '—',
             '{{pageCount}}': String(ctx.pageCount ?? 0),
             '{{documentHash}}': ctx.documentHash ? `Document hash (SHA-256): ${ctx.documentHash}` : 'Document hash: N/A',
-            '{{attachmentNote}}': attachmentNote
+            '{{attachmentNote}}': attachmentNote,
+            '{{editLink}}': editLink
         };
         let subject = template.subject || '';
         let body = template.body || '';

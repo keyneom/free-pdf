@@ -192,6 +192,15 @@
                     </div>
                 </div>
 
+                <!-- Signing flow banner: shown when document has our metadata (multi-signer flow) -->
+                <div id="signing-flow-banner" class="signing-flow-banner hidden" role="status" aria-live="polite">
+                    <div class="signing-flow-banner-content">
+                        <span class="signing-flow-banner-icon" aria-hidden="true">✓</span>
+                        <span id="signing-flow-banner-text"></span>
+                        <button type="button" id="signing-flow-set-expected" class="signing-flow-set-btn" title="Set expected signers (order)">Set expected signers</button>
+                    </div>
+                </div>
+
                 <div class="pdf-workspace">
                     <!-- Pages Sidebar -->
                     <aside class="pages-sidebar" id="pages-sidebar" aria-label="Pages">
@@ -326,6 +335,15 @@
                         <label for="send-body">Body</label>
                         <textarea id="send-body" class="send-textarea" rows="10" placeholder="Email body"></textarea>
                     </div>
+                    <p id="send-to-hint" class="send-to-hint hidden"></p>
+                    <div class="send-field">
+                        <label for="send-cc">CC (optional)</label>
+                        <input type="text" id="send-cc" class="send-input" placeholder="cc@example.com, another@example.com">
+                    </div>
+                    <div class="send-field">
+                        <label for="send-bcc">BCC (optional)</label>
+                        <input type="text" id="send-bcc" class="send-input" placeholder="bcc@example.com">
+                    </div>
                     <p class="send-hint"><strong>Important:</strong> The PDF will be downloaded automatically. Your email app will open with this subject and body. <strong>You MUST manually attach the downloaded PDF file to the email before sending.</strong> Make sure to attach the file that was just downloaded—do not attach a different version.</p>
                     <p class="send-footer-note"><a href="#" id="send-manage-templates" class="send-link">Manage email templates</a></p>
                 </div>
@@ -357,7 +375,7 @@
                         </label>
                     </div>
                     <ul id="templates-list" class="templates-list"></ul>
-                    <p class="templates-placeholders">Placeholders: {{filename}}, {{date}}, {{signatureSummary}}, {{signerNames}}, {{pageCount}}, {{documentHash}}, {{attachmentNote}}</p>
+                    <p class="templates-placeholders">Placeholders: {{filename}}, {{date}}, {{signatureSummary}}, {{signerNames}}, {{pageCount}}, {{documentHash}}, {{attachmentNote}}, {{editLink}}</p>
                 </div>
             </div>
         </div>
@@ -387,6 +405,40 @@
                 <div class="modal-footer">
                     <button id="tpl-edit-cancel" class="btn btn-secondary">Cancel</button>
                     <button id="tpl-edit-save" class="btn btn-primary">Save</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Expected signers modal (multi-signer flow) -->
+        <div id="expected-signers-modal" class="modal hidden">
+            <div class="modal-content modal-content--wide">
+                <div class="modal-header">
+                    <h3>Expected signers (order)</h3>
+                    <button class="modal-close" id="expected-signers-modal-close">&times;</button>
+                </div>
+                <div class="modal-body">
+                    <p class="bulk-fill-hint">Add or remove signers in the order they should sign. The number can default from signature placements on the document.</p>
+                    <div class="expected-signers-toolbar">
+                        <button type="button" id="expected-signers-add" class="btn btn-primary">Add signer</button>
+                    </div>
+                    <div id="expected-signers-list" class="expected-signers-list" role="list"></div>
+                    <div class="send-field" style="margin-top: 16px;">
+                        <label for="expected-signers-completion-to">When complete, send document to (To: email or comma-separated)</label>
+                        <input type="text" id="expected-signers-completion-to" class="send-input" placeholder="you@example.com or all@x.com, signer2@x.com">
+                        <small class="bulk-fill-hint">The last signer will have the email client open with these addresses in To. Use multiple emails to send to everyone.</small>
+                    </div>
+                    <div class="send-field">
+                        <label for="expected-signers-completion-cc">CC when complete (optional)</label>
+                        <input type="text" id="expected-signers-completion-cc" class="send-input" placeholder="cc@example.com, another@example.com">
+                    </div>
+                    <div class="send-field">
+                        <label for="expected-signers-completion-bcc">BCC when complete (optional)</label>
+                        <input type="text" id="expected-signers-completion-bcc" class="send-input" placeholder="bcc@example.com">
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button id="expected-signers-cancel" class="btn btn-secondary">Cancel</button>
+                    <button id="expected-signers-save" class="btn btn-primary">Save</button>
                 </div>
             </div>
         </div>
@@ -559,6 +611,32 @@
                         <h4>Field Mapping</h4>
                         <p class="bulk-fill-hint">Map CSV columns to PDF form fields. Leave unmapped to skip.</p>
                         <div id="bulk-fill-mapping-list"></div>
+                    </div>
+
+                    <div id="bulk-fill-email-section" class="bulk-fill-email-section hidden">
+                        <h4>Send emails (optional)</h4>
+                        <p class="bulk-fill-hint">Select one or more columns that contain recipient emails (e.g. one column per signer). You can add an email directly in a row if it’s missing. Send is only allowed when at least one email is set for that row.</p>
+                        <div class="bulk-fill-email-row">
+                            <div class="send-field">
+                                <label for="bulk-fill-email-column">Email column(s)</label>
+                                <select id="bulk-fill-email-column" class="send-input bulk-fill-select" multiple size="4">
+                                </select>
+                                <small class="bulk-fill-hint">Hold Ctrl/Cmd to select multiple columns (e.g. signer 1, signer 2).</small>
+                            </div>
+                            <div class="send-field">
+                                <label for="bulk-fill-email-template">Email template</label>
+                                <select id="bulk-fill-email-template" class="send-input bulk-fill-select"></select>
+                            </div>
+                        </div>
+                        <div id="bulk-fill-rows" class="bulk-fill-rows hidden">
+                            <h4>Rows</h4>
+                            <p class="bulk-fill-hint">Download a filled PDF or send an email for each row.</p>
+                            <div class="bulk-fill-rows-toolbar">
+                                <button type="button" id="bulk-fill-send-all" class="btn btn-primary" disabled>Send all emails</button>
+                                <span id="bulk-fill-send-all-status" class="bulk-fill-send-all-status hidden"></span>
+                            </div>
+                            <div id="bulk-fill-rows-list" class="bulk-fill-rows-list"></div>
+                        </div>
                     </div>
 
                     <div id="bulk-fill-progress" class="bulk-fill-progress hidden">

@@ -9,6 +9,7 @@ import { SignaturePad } from './signature-pad.js';
 import { emailTemplates, setTemplatesBackend, getDefaultOnlyTemplatesStore } from './email-templates.js';
 import { secureStorage } from './secure-storage.js';
 import { BulkFillHandler } from './bulk-fill.js';
+import { parseSigningMetadata, hasOurSigningMetadata } from './signing-metadata.js';
 
 function escapeHtml(s) {
     if (s == null) return '';
@@ -33,6 +34,8 @@ class PDFEditorApp {
         this.fileName = 'document.pdf';
         this.documentHash = null;
         this.viewPages = []; // [{ id, docId, sourcePageNum, rotation }]
+        /** Parsed from PDF Keywords when loading a doc that has our signing metadata */
+        this.signingFlowMeta = null;
         this._pendingSignatureImage = null;
         this._selectedSavedSig = null;
 
@@ -45,7 +48,10 @@ class PDFEditorApp {
     init() {
         this.cacheElements();
         this.bindEvents();
-        this.canvasManager.setOnHistoryChange(() => this.updateHistoryButtons());
+        this.canvasManager.setOnHistoryChange(() => {
+            this.updateHistoryButtons();
+            this.updateSigningFlowBanner();
+        });
         this.setupDragAndDrop();
         this.setupKeyboardShortcuts();
         this.initSignaturePad();
@@ -55,6 +61,7 @@ class PDFEditorApp {
         this.setupTemplatesModal();
         this.setupTemplateEditModal();
         this.setupBulkFillModal();
+        this.setupExpectedSignersModal();
     }
 
     /**
@@ -408,6 +415,24 @@ class PDFEditorApp {
             this.renderPagesSidebar();
             this.applyPageRotationUI();
 
+            // Detect our signing metadata (Keywords or Producer) so we can show multi-signer flow
+            this.signingFlowMeta = null;
+            try {
+                const metadata = await this.pdfHandler.getMetadata(mainDocId);
+                if (hasOurSigningMetadata(metadata)) {
+                    const info = metadata?.info || {};
+                    const parsed = parseSigningMetadata(info.Keywords);
+                    if (parsed) {
+                        this.signingFlowMeta = parsed;
+                    } else {
+                        // Producer says our app but no Keywords yet (e.g. first save)
+                        this.signingFlowMeta = { signers: [], expectedSigners: [] };
+                    }
+                }
+            } catch (e) {
+                console.warn('Could not read PDF metadata for signing flow:', e);
+            }
+
             // Update UI
             this.welcomeScreen.classList.add('hidden');
             this.pdfContainer.classList.remove('hidden');
@@ -416,6 +441,7 @@ class PDFEditorApp {
             this.updatePageNavigation();
             this.updateZoomDisplay();
             this.updateHistoryButtons();
+            this.updateSigningFlowBanner();
 
             this.hideLoading();
         } catch (error) {
@@ -1283,6 +1309,7 @@ class PDFEditorApp {
         applyBtn.addEventListener('click', () => {
             if (!this.validateAndApplySignature()) return;
             this.hideSignatureModal();
+            this.updateSigningFlowBanner();
         });
 
         // Close on backdrop click
@@ -1476,7 +1503,9 @@ class PDFEditorApp {
             docBytesById,
             viewPages: this.viewPages,
             annotationsByPageId,
-            scale: this.currentScale
+            scale: this.currentScale,
+            mainDocId: this.pdfHandler.mainDocId,
+            signingFlowMeta: this.signingFlowMeta
         });
 
         const baseName = (this.fileName || '').replace(/\.pdf$/i, '').trim();
@@ -1536,13 +1565,18 @@ class PDFEditorApp {
                       .join('\n');
         const signerNames = [...signerSet].join(', ') || '—';
 
+        const editLink =
+            typeof window !== 'undefined' && window.location
+                ? (window.location.origin + window.location.pathname).replace(/\/$/, '')
+                : '';
         return {
             filename: exportName,
             date: new Date().toLocaleString(),
             signatureSummary,
             signerNames,
             pageCount: this.pdfHandler.totalPages || 0,
-            documentHash: this.documentHash || ''
+            documentHash: this.documentHash || '',
+            editLink
         };
     }
 
@@ -1557,7 +1591,8 @@ class PDFEditorApp {
         const bodyEl = document.getElementById('send-body');
         if (!sel || !subjectEl || !bodyEl) return;
 
-        const tpl = emailTemplates.getById(sel.value) || emailTemplates.getDefault();
+        const isDocTemplate = sel.value === '__doc__';
+        const tpl = isDocTemplate ? { subject: subjectEl.value || '', body: bodyEl.value || '' } : (emailTemplates.getById(sel.value) || emailTemplates.getDefault());
         const subject = (subjectEl.value || '').trim();
         const body = (bodyEl.value || '').trim();
         if (!subject || !body) {
@@ -1567,6 +1602,9 @@ class PDFEditorApp {
 
         this.showLoading('Preparing email...');
         try {
+            // Attach full template to document so it follows the doc across machines (saved in PDF Keywords)
+            if (!this.signingFlowMeta) this.signingFlowMeta = { signers: [], expectedSigners: [] };
+            if (!isDocTemplate) this.signingFlowMeta.emailTemplate = { subject: tpl.subject, body: tpl.body };
             const result = await this.getExportedPDF();
             if (!result) {
                 this.hideLoading();
@@ -1575,7 +1613,16 @@ class PDFEditorApp {
             this.exporter.downloadPDF(result.bytes, result.exportName);
             const ctx = this.buildEmailContext(result.exportName);
             const filled = emailTemplates.fill({ subject, body }, ctx);
-            const mailto = `mailto:?subject=${encodeURIComponent(filled.subject)}&body=${encodeURIComponent(filled.body)}`;
+            // When document has completion flow, pre-fill To with original sender or all signers
+            const toEmails = this.getCompletionToEmails();
+            const toPart = toEmails.length > 0 ? encodeURIComponent(toEmails.join(',')) + '?' : '?';
+            const ccEl = document.getElementById('send-cc');
+            const bccEl = document.getElementById('send-bcc');
+            const ccVal = (ccEl?.value || '').trim();
+            const bccVal = (bccEl?.value || '').trim();
+            let mailto = `mailto:${toPart}subject=${encodeURIComponent(filled.subject)}&body=${encodeURIComponent(filled.body)}`;
+            if (ccVal) mailto += `&cc=${encodeURIComponent(ccVal)}`;
+            if (bccVal) mailto += `&bcc=${encodeURIComponent(bccVal)}`;
             window.location.href = mailto;
             this.hideSendModal();
         } catch (error) {
@@ -1587,26 +1634,81 @@ class PDFEditorApp {
     }
 
     /**
-     * Populate Send modal with default template and fill subject/body
+     * Emails to use for "Send completed document to" (original sender or all signers). Used in mailto To.
+     * @returns {string[]}
+     */
+    getCompletionToEmails() {
+        const meta = this.signingFlowMeta;
+        if (!meta) return [];
+        if (typeof meta.originalSenderEmail === 'string' && meta.originalSenderEmail.trim()) return [meta.originalSenderEmail.trim()];
+        if (Array.isArray(meta.completionToEmails) && meta.completionToEmails.length > 0) return meta.completionToEmails;
+        return [];
+    }
+
+    getCompletionCcEmails() {
+        const meta = this.signingFlowMeta;
+        if (!meta || !Array.isArray(meta.completionCcEmails)) return [];
+        return meta.completionCcEmails;
+    }
+
+    getCompletionBccEmails() {
+        const meta = this.signingFlowMeta;
+        if (!meta || !Array.isArray(meta.completionBccEmails)) return [];
+        return meta.completionBccEmails;
+    }
+
+    /**
+     * Populate Send modal: use full template embedded in doc when present (works across machines), else default template.
      */
     refreshSendModal() {
         const sel = document.getElementById('send-template-select');
         const subjectEl = document.getElementById('send-subject');
         const bodyEl = document.getElementById('send-body');
+        const sendToHint = document.getElementById('send-to-hint');
         if (!sel || !subjectEl || !bodyEl) return;
 
         const templates = emailTemplates.getTemplates();
         const defaultTpl = emailTemplates.getDefault();
-
-        sel.innerHTML = templates.map((t) => `<option value="${t.id}" ${t.id === defaultTpl.id ? 'selected' : ''}>${escapeHtml(t.name)}</option>`).join('');
-
         const baseName = (this.fileName || '').replace(/\.pdf$/i, '').trim();
         const hasRealFilename = baseName && baseName !== 'document';
         const exportName = hasRealFilename ? `${baseName}-edited.pdf` : 'document.pdf';
         const ctx = this.buildEmailContext(exportName);
-        const filled = emailTemplates.fill(defaultTpl, ctx);
-        subjectEl.value = filled.subject;
-        bodyEl.value = filled.body;
+
+        // Prefer full template embedded in document (same on all machines)
+        const docTemplate = this.signingFlowMeta?.emailTemplate;
+        if (docTemplate && typeof docTemplate.subject === 'string' && typeof docTemplate.body === 'string') {
+            const filled = emailTemplates.fill({ subject: docTemplate.subject, body: docTemplate.body }, ctx);
+            subjectEl.value = filled.subject;
+            bodyEl.value = filled.body;
+            sel.innerHTML = templates.map((t) => `<option value="${t.id}">${escapeHtml(t.name)}</option>`).join('');
+            const opt = document.createElement('option');
+            opt.value = '__doc__';
+            opt.selected = true;
+            opt.textContent = '(Document template)';
+            sel.insertBefore(opt, sel.firstChild);
+        } else {
+            const tplToUse = defaultTpl;
+            sel.innerHTML = templates.map((t) => `<option value="${t.id}" ${t.id === tplToUse.id ? 'selected' : ''}>${escapeHtml(t.name)}</option>`).join('');
+            const filled = emailTemplates.fill(tplToUse, ctx);
+            subjectEl.value = filled.subject;
+            bodyEl.value = filled.body;
+        }
+
+        // Show "Send to" hint and pre-fill CC/BCC when completion emails are set
+        const toEmails = this.getCompletionToEmails();
+        if (sendToHint) {
+            if (toEmails.length > 0) {
+                sendToHint.textContent = `This email will be addressed to: ${toEmails.join(', ')}`;
+                sendToHint.classList.remove('hidden');
+            } else {
+                sendToHint.classList.add('hidden');
+                sendToHint.textContent = '';
+            }
+        }
+        const sendCc = document.getElementById('send-cc');
+        const sendBcc = document.getElementById('send-bcc');
+        if (sendCc) sendCc.value = (this.getCompletionCcEmails() || []).join(', ');
+        if (sendBcc) sendBcc.value = (this.getCompletionBccEmails() || []).join(', ');
     }
 
     showSendModal() {
@@ -2306,12 +2408,18 @@ class PDFEditorApp {
         doBtn?.addEventListener('click', () => this.sendViaEmail());
 
         sel?.addEventListener('change', () => {
-            const t = emailTemplates.getById(sel.value);
-            if (!t) return;
             const baseName = (this.fileName || '').replace(/\.pdf$/i, '').trim();
             const hasRealFilename = baseName && baseName !== 'document';
             const exportName = hasRealFilename ? `${baseName}-edited.pdf` : 'document.pdf';
             const ctx = this.buildEmailContext(exportName);
+            if (sel.value === '__doc__' && this.signingFlowMeta?.emailTemplate) {
+                const filled = emailTemplates.fill(this.signingFlowMeta.emailTemplate, ctx);
+                subjectEl.value = filled.subject;
+                bodyEl.value = filled.body;
+                return;
+            }
+            const t = emailTemplates.getById(sel.value);
+            if (!t) return;
             const filled = emailTemplates.fill(t, ctx);
             subjectEl.value = filled.subject;
             bodyEl.value = filled.body;
@@ -2533,6 +2641,13 @@ class PDFEditorApp {
         const filenameInput = document.getElementById('bulk-fill-filename');
         const mappingDiv = document.getElementById('bulk-fill-mapping');
         const mappingList = document.getElementById('bulk-fill-mapping-list');
+        const emailSection = document.getElementById('bulk-fill-email-section');
+        const emailColumnSelect = document.getElementById('bulk-fill-email-column');
+        const emailTemplateSelect = document.getElementById('bulk-fill-email-template');
+        const bulkFillRowsDiv = document.getElementById('bulk-fill-rows');
+        const bulkFillRowsList = document.getElementById('bulk-fill-rows-list');
+        const sendAllBtn = document.getElementById('bulk-fill-send-all');
+        const sendAllStatus = document.getElementById('bulk-fill-send-all-status');
         const progressDiv = document.getElementById('bulk-fill-progress');
         const progressFill = document.getElementById('bulk-fill-progress-fill');
         const progressText = document.getElementById('bulk-fill-progress-text');
@@ -2542,6 +2657,40 @@ class PDFEditorApp {
         let csvText = null;
         let pdfFieldNames = [];
         let csvHeaders = [];
+        const sentRowIndices = new Set();
+        /** Per-row manually entered email when column(s) are missing (rowIndex -> email string) */
+        const manualEmailByRow = {};
+
+        const getFieldMappingFromDOM = () => {
+            const fieldMapping = {};
+            if (!mappingList) return fieldMapping;
+            mappingList.querySelectorAll('select').forEach((select) => {
+                const csvColumn = select.dataset.csvColumn;
+                const pdfField = select.value;
+                if (pdfField && pdfField !== '') fieldMapping[csvColumn] = pdfField;
+            });
+            return fieldMapping;
+        };
+
+        const getSelectedEmailColumns = () => {
+            if (!emailColumnSelect || !emailColumnSelect.multiple) return [];
+            return Array.from(emailColumnSelect.selectedOptions).map((o) => o.value).filter(Boolean);
+        };
+
+        const getEmailsForRow = (rowData, index) => {
+            const cols = getSelectedEmailColumns();
+            const fromCols = cols.flatMap((c) => (rowData[c] || '').trim()).filter(Boolean);
+            const manual = (manualEmailByRow[index] || '').trim();
+            const combined = manual ? [...fromCols, manual] : fromCols;
+            return [...new Set(combined)];
+        };
+
+        /** Selected email columns that have no value for this row (missing signer slot). */
+        const getMissingEmailColumnsForRow = (rowData) => {
+            const cols = getSelectedEmailColumns();
+            if (cols.length <= 1) return [];
+            return cols.filter((c) => !(rowData[c] || '').trim());
+        };
 
         closeBtn?.addEventListener('click', () => this.hideBulkFillModal());
         cancelBtn?.addEventListener('click', () => this.hideBulkFillModal());
@@ -2663,10 +2812,12 @@ class PDFEditorApp {
             if (e.target === modal) this.hideBulkFillModal();
         });
 
-        // Update mapping when fields are available
+        // Update mapping when fields are available; also show email section and rows list
         this.updateBulkFillMapping = () => {
             if (pdfFieldNames.length === 0 || csvHeaders.length === 0) {
                 mappingDiv.classList.add('hidden');
+                if (emailSection) emailSection.classList.add('hidden');
+                if (bulkFillRowsDiv) bulkFillRowsDiv.classList.add('hidden');
                 processBtn.disabled = true;
                 return;
             }
@@ -2690,7 +2841,270 @@ class PDFEditorApp {
             });
 
             processBtn.disabled = false;
+
+            // Email section: multi-select column(s) + template dropdowns
+            if (emailSection) {
+                emailSection.classList.remove('hidden');
+                if (emailColumnSelect) {
+                    const currentSelected = getSelectedEmailColumns();
+                    emailColumnSelect.innerHTML = csvHeaders.map((h) => `<option value="${escapeHtml(h)}" ${currentSelected.includes(h) ? 'selected' : ''}>${escapeHtml(h)}</option>`).join('');
+                }
+                if (emailTemplateSelect) {
+                    const templates = emailTemplates.getTemplates();
+                    const defaultTpl = emailTemplates.getDefault();
+                    const currentTpl = emailTemplateSelect.value;
+                    emailTemplateSelect.innerHTML = templates
+                        .map((t) => `<option value="${t.id}" ${currentTpl === t.id || (!currentTpl && t.id === defaultTpl.id) ? 'selected' : ''}>${escapeHtml(t.name)}</option>`)
+                        .join('');
+                }
+            }
+
+            // Rows list: one row per CSV row with optional manual email, Download and Send email
+            if (bulkFillRowsDiv && bulkFillRowsList && csvText) {
+                // Preserve manual email inputs before rebuilding
+                bulkFillRowsList.querySelectorAll('.bulk-fill-row-email-input').forEach((input) => {
+                    const idx = parseInt(input.dataset.rowIndex, 10);
+                    if (!Number.isNaN(idx)) manualEmailByRow[idx] = (input.value || '').trim();
+                });
+                const rows = this.bulkFillHandler.parseCSV(csvText);
+                const filenameTemplate = filenameInput?.value || 'document-{{row}}.pdf';
+                bulkFillRowsDiv.classList.remove('hidden');
+                bulkFillRowsList.innerHTML = '';
+
+                rows.forEach((rowData, index) => {
+                    const firstCol = csvHeaders[0];
+                    const label = firstCol ? (rowData[firstCol] || '').trim() || `Row ${index + 1}` : `Row ${index + 1}`;
+                    const emails = getEmailsForRow(rowData, index);
+                    const hasEmail = emails.length > 0;
+                    const emailDisplay = emails.length > 0 ? emails.join(', ') : 'No email';
+                    const isSent = sentRowIndices.has(index);
+                    const manualVal = manualEmailByRow[index] || '';
+                    const rowEl = document.createElement('div');
+                    rowEl.className = 'bulk-fill-row-item' + (isSent ? ' bulk-fill-row-sent' : '');
+                    rowEl.dataset.rowIndex = String(index);
+                    rowEl.innerHTML = `
+                        <span class="bulk-fill-row-label" title="${escapeHtml(label)}">${escapeHtml(String(label).slice(0, 50))}${String(label).length > 50 ? '…' : ''}${hasEmail ? ' — ' + escapeHtml(emailDisplay) : ''}</span>
+                        <input type="email" class="bulk-fill-row-email-input" data-row-index="${index}" placeholder="Add email if missing" value="${escapeHtml(manualVal)}" title="Add or override email for this row">
+                        <div class="bulk-fill-row-actions">
+                            ${isSent ? '<span class="bulk-fill-row-sent-badge" aria-label="Email opened for this row">✓ Sent</span>' : ''}
+                            <button type="button" class="btn btn-secondary bulk-fill-row-download" data-row-index="${index}" title="Download filled PDF">Download</button>
+                            <button type="button" class="btn btn-primary bulk-fill-row-send" data-row-index="${index}" title="Download PDF and open email" ${!hasEmail ? 'disabled' : ''}>Send email</button>
+                        </div>
+                    `;
+                    bulkFillRowsList.appendChild(rowEl);
+                });
+
+                // Enable Send all when at least one row has an email
+                const rowsWithEmail = rows.filter((r, i) => getEmailsForRow(r, i).length > 0);
+                if (sendAllBtn) {
+                    sendAllBtn.disabled = rowsWithEmail.length === 0;
+                }
+                if (sendAllStatus) {
+                    sendAllStatus.classList.add('hidden');
+                    sendAllStatus.textContent = '';
+                }
+            }
         };
+
+        const markRowSentInDOM = (index) => {
+            const rowEl = bulkFillRowsList?.querySelector(`.bulk-fill-row-item[data-row-index="${index}"]`);
+            if (!rowEl || rowEl.querySelector('.bulk-fill-row-sent-badge')) return;
+            const actions = rowEl.querySelector('.bulk-fill-row-actions');
+            if (actions) {
+                const badge = document.createElement('span');
+                badge.className = 'bulk-fill-row-sent-badge';
+                badge.setAttribute('aria-label', 'Email opened for this row');
+                badge.textContent = '✓ Sent';
+                actions.insertBefore(badge, actions.firstChild);
+            }
+            rowEl.classList.add('bulk-fill-row-sent');
+        };
+
+        // When user types in per-row email input, update manualEmailByRow and enable/disable Send for that row
+        bulkFillRowsList?.addEventListener('input', (e) => {
+            const input = e.target.closest('.bulk-fill-row-email-input');
+            if (!input || !csvText) return;
+            const index = parseInt(input.dataset.rowIndex, 10);
+            if (Number.isNaN(index)) return;
+            manualEmailByRow[index] = (input.value || '').trim();
+            const rows = this.bulkFillHandler.parseCSV(csvText);
+            const rowData = rows[index];
+            if (rowData == null) return;
+            const emails = getEmailsForRow(rowData, index);
+            const rowEl = input.closest('.bulk-fill-row-item');
+            const sendBtn = rowEl?.querySelector('.bulk-fill-row-send');
+            if (sendBtn) sendBtn.disabled = emails.length === 0;
+            const anyWithEmail = rows.some((r, i) => getEmailsForRow(r, i).length > 0);
+            if (sendAllBtn) sendAllBtn.disabled = !anyWithEmail;
+        });
+
+        // Delegated handlers for per-row Download and Send email
+        bulkFillRowsList?.addEventListener('click', async (e) => {
+            const btn = e.target.closest('.bulk-fill-row-download, .bulk-fill-row-send');
+            if (!btn || !templateBytes || !csvText) return;
+            const index = parseInt(btn.dataset.rowIndex, 10);
+            if (Number.isNaN(index)) return;
+
+            const rows = this.bulkFillHandler.parseCSV(csvText);
+            if (index < 0 || index >= rows.length) return;
+            const rowData = rows[index];
+            const fieldMapping = getFieldMappingFromDOM();
+            const filenameTemplate = filenameInput?.value || 'document-{{row}}.pdf';
+
+            const doRow = async () => {
+                const filledBytes = await this.bulkFillHandler.fillPDF(templateBytes, rowData, fieldMapping);
+                const filename = this.bulkFillHandler.generateFilename(filenameTemplate, rowData, index);
+                this.bulkFillHandler.downloadPDF(filledBytes, filename);
+                return { filledBytes, filename };
+            };
+
+            if (btn.classList.contains('bulk-fill-row-download')) {
+                try {
+                    await doRow();
+                } catch (err) {
+                    console.error('Bulk fill row download error:', err);
+                    alert('Error generating PDF: ' + err.message);
+                }
+                return;
+            }
+
+            if (btn.classList.contains('bulk-fill-row-send')) {
+                const emails = getEmailsForRow(rowData, index);
+                if (emails.length === 0) {
+                    alert('Please enter an email for this row before sending. Add an email in the row or select email column(s) above.');
+                    return;
+                }
+                const missingCols = getMissingEmailColumnsForRow(rowData);
+                if (missingCols.length > 0) {
+                    const ok = confirm(
+                        `This row has no email for: ${missingCols.join(', ')}. Send anyway with ${emails.join(', ')}?`
+                    );
+                    if (!ok) return;
+                }
+                const tplId = emailTemplateSelect?.value || '';
+                const tpl = emailTemplates.getById(tplId) || emailTemplates.getDefault();
+                try {
+                    const { filename } = await doRow();
+                    const pageCount = await this.bulkFillHandler.getPageCount(templateBytes);
+                    const editLink =
+                        typeof window !== 'undefined' && window.location
+                            ? (window.location.origin + window.location.pathname).replace(/\/$/, '')
+                            : '';
+                    const ctx = {
+                        filename,
+                        date: new Date().toLocaleString(),
+                        signatureSummary: '—',
+                        signerNames: '—',
+                        pageCount,
+                        documentHash: '',
+                        editLink
+                    };
+                    const filled = emailTemplates.fill(tpl, ctx);
+                    const toPart = encodeURIComponent(emails.join(','));
+                    const mailto = `mailto:${toPart}?subject=${encodeURIComponent(filled.subject)}&body=${encodeURIComponent(filled.body)}`;
+                    window.location.href = mailto;
+                    sentRowIndices.add(index);
+                    markRowSentInDOM(index);
+                } catch (err) {
+                    console.error('Bulk fill send email error:', err);
+                    alert('Error preparing email: ' + err.message);
+                }
+            }
+        });
+
+        // Send all: open mailto for each row that has at least one email (from columns or manual)
+        const SEND_ALL_DELAY_MS = 3000;
+        sendAllBtn?.addEventListener('click', async () => {
+            if (!templateBytes || !csvText) return;
+            const rows = this.bulkFillHandler.parseCSV(csvText);
+            const indicesToSend = rows
+                .map((r, i) => (getEmailsForRow(r, i).length > 0 ? i : -1))
+                .filter((i) => i >= 0);
+            const missingCount = rows.length - indicesToSend.length;
+            if (indicesToSend.length === 0) {
+                alert('No rows have an email. Select email column(s) and/or add an email for each row.');
+                return;
+            }
+            if (missingCount > 0) {
+                const ok = confirm(`${missingCount} row(s) have no email and will be skipped. Continue with ${indicesToSend.length} row(s)?`);
+                if (!ok) return;
+            }
+            const rowsWithMissingSigner = indicesToSend
+                .map((i) => ({ index: i, rowData: rows[i], missing: getMissingEmailColumnsForRow(rows[i]) }))
+                .filter((x) => x.missing.length > 0);
+            if (rowsWithMissingSigner.length > 0) {
+                const summary = rowsWithMissingSigner
+                    .slice(0, 5)
+                    .map((x) => `Row ${x.index + 1} (missing: ${x.missing.join(', ')})`)
+                    .join('; ');
+                const more = rowsWithMissingSigner.length > 5 ? ` … and ${rowsWithMissingSigner.length - 5} more` : '';
+                const ok = confirm(
+                    `${rowsWithMissingSigner.length} row(s) have missing signer email(s): ${summary}${more}. Send anyway with the email(s) they have?`
+                );
+                if (!ok) return;
+            }
+
+            const fieldMapping = getFieldMappingFromDOM();
+            const filenameTemplate = filenameInput?.value || 'document-{{row}}.pdf';
+            const tplId = emailTemplateSelect?.value || '';
+            const tpl = emailTemplates.getById(tplId) || emailTemplates.getDefault();
+            const pageCount = await this.bulkFillHandler.getPageCount(templateBytes);
+            const editLink =
+                typeof window !== 'undefined' && window.location
+                    ? (window.location.origin + window.location.pathname).replace(/\/$/, '')
+                    : '';
+
+            sendAllBtn.disabled = true;
+            if (sendAllStatus) {
+                sendAllStatus.classList.remove('hidden');
+            }
+
+            for (let i = 0; i < indicesToSend.length; i++) {
+                const index = indicesToSend[i];
+                const rowData = rows[index];
+                const emails = getEmailsForRow(rowData, index);
+                if (emails.length === 0) continue;
+
+                if (sendAllStatus) {
+                    sendAllStatus.textContent = `Opening email ${i + 1} of ${indicesToSend.length}…`;
+                }
+                try {
+                    const filledBytes = await this.bulkFillHandler.fillPDF(templateBytes, rowData, fieldMapping);
+                    const filename = this.bulkFillHandler.generateFilename(filenameTemplate, rowData, index);
+                    this.bulkFillHandler.downloadPDF(filledBytes, filename);
+                    const ctx = {
+                        filename,
+                        date: new Date().toLocaleString(),
+                        signatureSummary: '—',
+                        signerNames: '—',
+                        pageCount,
+                        documentHash: '',
+                        editLink
+                    };
+                    const filled = emailTemplates.fill(tpl, ctx);
+                    const toPart = encodeURIComponent(emails.join(','));
+                    const mailto = `mailto:${toPart}?subject=${encodeURIComponent(filled.subject)}&body=${encodeURIComponent(filled.body)}`;
+                    window.location.href = mailto;
+                    sentRowIndices.add(index);
+                    markRowSentInDOM(index);
+                } catch (err) {
+                    console.error('Send all error for row ' + (index + 1), err);
+                    if (sendAllStatus) sendAllStatus.textContent = `Error on row ${index + 1}: ${err.message}`;
+                    break;
+                }
+                if (i < indicesToSend.length - 1) {
+                    await new Promise((r) => setTimeout(r, SEND_ALL_DELAY_MS));
+                }
+            }
+
+            if (sendAllStatus) {
+                sendAllStatus.textContent = indicesToSend.length > 0 ? `Opened ${indicesToSend.length} email(s). Attach each downloaded PDF and send.` : '';
+            }
+            sendAllBtn.disabled = false;
+        });
+
+        // When email column changes, re-enable/disable Send email buttons and refresh row labels
+        emailColumnSelect?.addEventListener('change', () => this.updateBulkFillMapping());
 
         // Expose minimal internals so showBulkFillModal() can set default template.
         this._bulkFillModalInternal = {
@@ -2699,6 +3113,7 @@ class PDFEditorApp {
                 csvText = null;
                 pdfFieldNames = [];
                 csvHeaders = [];
+                sentRowIndices.clear();
                 if (templateStatus) templateStatus.textContent = '';
             },
             setTemplateFromOpenDoc: async () => {
@@ -2715,12 +3130,144 @@ class PDFEditorApp {
         };
     }
 
+    setupExpectedSignersModal() {
+        const modal = document.getElementById('expected-signers-modal');
+        const closeBtn = document.getElementById('expected-signers-modal-close');
+        const cancelBtn = document.getElementById('expected-signers-cancel');
+        const saveBtn = document.getElementById('expected-signers-save');
+        const listEl = document.getElementById('expected-signers-list');
+        const addBtn = document.getElementById('expected-signers-add');
+        const completionToInput = document.getElementById('expected-signers-completion-to');
+        const completionCcInput = document.getElementById('expected-signers-completion-cc');
+        const completionBccInput = document.getElementById('expected-signers-completion-bcc');
+        const setExpectedBtn = document.getElementById('signing-flow-set-expected');
+
+        const countSignaturePlacements = () => {
+            let n = 0;
+            for (const page of this.canvasManager.getAllAnnotations?.() || []) {
+                for (const ann of page.annotations || []) {
+                    if (ann.type === 'signature') n++;
+                }
+            }
+            return n;
+        };
+
+        const renderList = (entries) => {
+            if (!listEl) return;
+            listEl.innerHTML = '';
+            (entries || []).forEach((entry, i) => {
+                const row = document.createElement('div');
+                row.className = 'expected-signers-row';
+                row.setAttribute('role', 'listitem');
+                row.innerHTML = `
+                    <span class="expected-signers-ordinal">${i + 1}.</span>
+                    <input type="text" class="expected-signers-name send-input" placeholder="Name" value="${escapeHtml(entry.name || '')}" data-index="${i}">
+                    <input type="email" class="expected-signers-email send-input" placeholder="Email (optional)" value="${escapeHtml(entry.email || '')}" data-index="${i}">
+                    <button type="button" class="btn btn-secondary expected-signers-remove" data-index="${i}" title="Remove signer">Remove</button>
+                `;
+                listEl.appendChild(row);
+            });
+        };
+
+        const getEntriesFromList = () => {
+            if (!listEl) return [];
+            const entries = [];
+            listEl.querySelectorAll('.expected-signers-row').forEach((row, i) => {
+                const nameInput = row.querySelector('.expected-signers-name');
+                const emailInput = row.querySelector('.expected-signers-email');
+                const name = (nameInput?.value || '').trim();
+                const email = (emailInput?.value || '').trim();
+                entries.push({ name, email: email || undefined, order: i + 1 });
+            });
+            return entries;
+        };
+
+        const show = () => {
+            if (!this.signingFlowMeta) this.signingFlowMeta = { signers: [], expectedSigners: [] };
+            let entries = this.signingFlowMeta.expectedSigners || [];
+            if (entries.length === 0) {
+                const n = countSignaturePlacements();
+                if (n > 0) {
+                    entries = Array.from({ length: n }, (_, i) => ({ name: `Signer ${i + 1}`, email: undefined, order: i + 1 }));
+                }
+            }
+            renderList(entries);
+            const meta = this.signingFlowMeta;
+            if (completionToInput) {
+                if (meta.originalSenderEmail) completionToInput.value = meta.originalSenderEmail;
+                else if (Array.isArray(meta.completionToEmails) && meta.completionToEmails.length > 0) completionToInput.value = meta.completionToEmails.join(', ');
+                else completionToInput.value = '';
+            }
+            if (completionCcInput) completionCcInput.value = (meta?.completionCcEmails || []).join(', ');
+            if (completionBccInput) completionBccInput.value = (meta?.completionBccEmails || []).join(', ');
+            modal?.classList.remove('hidden');
+        };
+
+        const hide = () => modal?.classList.add('hidden');
+
+        addBtn?.addEventListener('click', () => {
+            const entries = getEntriesFromList();
+            entries.push({ name: '', email: undefined, order: entries.length + 1 });
+            renderList(entries);
+        });
+
+        listEl?.addEventListener('click', (e) => {
+            const removeBtn = e.target.closest('.expected-signers-remove');
+            if (!removeBtn) return;
+            const row = removeBtn.closest('.expected-signers-row');
+            if (!row) return;
+            const entries = getEntriesFromList();
+            const idx = Array.from(listEl.querySelectorAll('.expected-signers-row')).indexOf(row);
+            if (idx < 0 || idx >= entries.length) return;
+            entries.splice(idx, 1);
+            entries.forEach((ent, i) => { ent.order = i + 1; });
+            renderList(entries);
+        });
+
+        setExpectedBtn?.addEventListener('click', () => show());
+        closeBtn?.addEventListener('click', () => hide());
+        cancelBtn?.addEventListener('click', () => hide());
+        saveBtn?.addEventListener('click', () => {
+            const raw = getEntriesFromList();
+            const expectedSigners = raw.filter((e) => (e.name || '').trim()).map((e, i) => ({ ...e, name: (e.name || '').trim(), order: i + 1 }));
+            const completionToText = (completionToInput?.value ?? '').trim();
+            const completionToEmails = completionToText
+                ? completionToText.split(',').map((e) => e.trim()).filter(Boolean)
+                : [];
+            const completionCcText = (completionCcInput?.value ?? '').trim();
+            const completionCcEmails = completionCcText ? completionCcText.split(',').map((e) => e.trim()).filter(Boolean) : [];
+            const completionBccText = (completionBccInput?.value ?? '').trim();
+            const completionBccEmails = completionBccText ? completionBccText.split(',').map((e) => e.trim()).filter(Boolean) : [];
+            if (!this.signingFlowMeta) this.signingFlowMeta = { signers: [], expectedSigners: [] };
+            this.signingFlowMeta.expectedSigners = expectedSigners;
+            if (completionToEmails.length === 1) {
+                this.signingFlowMeta.originalSenderEmail = completionToEmails[0];
+                this.signingFlowMeta.completionToEmails = completionToEmails;
+            } else if (completionToEmails.length > 1) {
+                this.signingFlowMeta.originalSenderEmail = undefined;
+                this.signingFlowMeta.completionToEmails = completionToEmails;
+            } else {
+                this.signingFlowMeta.originalSenderEmail = undefined;
+                this.signingFlowMeta.completionToEmails = undefined;
+            }
+            this.signingFlowMeta.completionCcEmails = completionCcEmails.length > 0 ? completionCcEmails : undefined;
+            this.signingFlowMeta.completionBccEmails = completionBccEmails.length > 0 ? completionBccEmails : undefined;
+            this.updateSigningFlowBanner();
+            hide();
+        });
+        modal?.addEventListener('click', (e) => {
+            if (e.target === modal) hide();
+        });
+    }
+
     async showBulkFillModal() {
         // Reset form
         document.getElementById('bulk-fill-template').value = '';
         document.getElementById('bulk-fill-csv').value = '';
         document.getElementById('bulk-fill-filename').value = 'document-{{row}}.pdf';
         document.getElementById('bulk-fill-mapping').classList.add('hidden');
+        document.getElementById('bulk-fill-email-section')?.classList.add('hidden');
+        document.getElementById('bulk-fill-rows')?.classList.add('hidden');
         document.getElementById('bulk-fill-progress').classList.add('hidden');
         document.getElementById('bulk-fill-process').disabled = true;
         document.getElementById('bulk-fill-cancel').disabled = false;
@@ -2752,6 +3299,84 @@ class PDFEditorApp {
         }
         this.btnUndo.disabled = !this.canvasManager.canUndo();
         this.btnRedo.disabled = !this.canvasManager.canRedo();
+    }
+
+    /**
+     * Show or hide the signing-flow banner based on signingFlowMeta and current canvas signatures.
+     * Ensures a smooth multi-signer flow: open → sign → send to next → repeat until complete.
+     */
+    updateSigningFlowBanner() {
+        const banner = document.getElementById('signing-flow-banner');
+        const textEl = document.getElementById('signing-flow-banner-text');
+        if (!banner || !textEl) return;
+
+        if (!this.signingFlowMeta) {
+            banner.classList.add('hidden');
+            return;
+        }
+
+        const fromMeta = this.signingFlowMeta.signers || [];
+        const fromCanvas = [];
+        for (const page of this.canvasManager.getAllAnnotations?.() || []) {
+            for (const ann of page.annotations || []) {
+                if (ann.type === 'signature' && ann.object?._signatureMeta?.signerName) {
+                    fromCanvas.push({
+                        name: ann.object._signatureMeta.signerName,
+                        timestamp: ann.object._signatureMeta.timestamp || ''
+                    });
+                }
+            }
+        }
+        const seen = new Set();
+        const allSigners = [];
+        for (const s of fromMeta) {
+            if (s.name && !seen.has(s.name)) {
+                seen.add(s.name);
+                allSigners.push(s.name);
+            }
+        }
+        for (const s of fromCanvas) {
+            if (s.name && !seen.has(s.name)) {
+                seen.add(s.name);
+                allSigners.push(s.name);
+            }
+        }
+
+        const expected = this.signingFlowMeta.expectedSigners || [];
+        // Only count expected signers who have an email (flow completes when each populated signer has signed)
+        const expectedWithEmail = expected.filter((e) => (e.email || '').trim());
+        const totalExpected = expectedWithEmail.length;
+        const countSoFar = allSigners.length;
+        const completionTo = this.signingFlowMeta?.originalSenderEmail
+            ? [this.signingFlowMeta.originalSenderEmail]
+            : (this.signingFlowMeta?.completionToEmails || []);
+        const hasCompletionTo = completionTo.length > 0;
+        const allSigned = totalExpected > 0 && countSoFar >= totalExpected;
+        const lastSigner = totalExpected > 0 && countSoFar === totalExpected - 1;
+
+        let msg = 'This document is part of a signing flow. ';
+        if (allSigners.length > 0) {
+            msg += `Signatures so far: ${allSigners.join(', ')}. `;
+        }
+        if (totalExpected > 0) {
+            msg += `${countSoFar} of ${totalExpected} signers. `;
+        }
+        if (allSigned) {
+            if (hasCompletionTo) {
+                msg += `All signers have signed. Send the completed document to: ${completionTo.join(', ')}.`;
+            } else {
+                msg += 'All signers have signed. Use Send to email the completed document.';
+            }
+        } else if (lastSigner && hasCompletionTo) {
+            msg += `You're the last signer. Sign below and send the completed document to: ${completionTo.join(', ')}.`;
+        } else if (lastSigner) {
+            msg += "You're the last signer. Sign below and send the completed document back to the original sender.";
+        } else {
+            msg += 'Sign below and send to the next person to get a complete document.';
+        }
+
+        textEl.textContent = msg;
+        banner.classList.remove('hidden');
     }
 
     /**

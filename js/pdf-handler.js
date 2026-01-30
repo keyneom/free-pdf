@@ -322,4 +322,17 @@ export class PDFHandler {
     isLoaded() {
         return this.docs.size > 0;
     }
+
+    /**
+     * Get document metadata (Info dict + XMP if present). Use to detect our signing-flow metadata in Keywords.
+     * @param {string} [docId] - Document id (default main)
+     * @returns {Promise<{ info: Object, metadata?: Object }>}
+     */
+    async getMetadata(docId = this.mainDocId) {
+        const doc = docId ? this.docs.get(docId) : null;
+        if (!doc?.pdfDoc || typeof doc.pdfDoc.getMetadata !== 'function') {
+            return { info: {}, metadata: null };
+        }
+        return doc.pdfDoc.getMetadata();
+    }
 }

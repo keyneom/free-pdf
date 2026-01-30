@@ -3,6 +3,7 @@
  */
 
 const { PDFDocument, rgb, StandardFonts, degrees } = PDFLib;
+import { parseSigningMetadata, buildSigningKeywords } from './signing-metadata.js';
 
 export class PDFExporter {
     constructor() {
@@ -49,6 +50,9 @@ export class PDFExporter {
                     mimeType: 'application/json',
                     description: 'Signature audit trail'
                 });
+                const signers = auditEntries.map((e) => ({ name: e.signerName || '', timestamp: e.timestamp || '' }));
+                const keywordsPayload = buildSigningKeywords({ signers });
+                if (keywordsPayload) pdfDoc.setKeywords(keywordsPayload);
             }
 
             pdfDoc.setModificationDate(new Date());
@@ -57,13 +61,14 @@ export class PDFExporter {
             return await pdfDoc.save();
         }
 
-        const { docBytesById, viewPages, annotationsByPageId, scale } = input;
+        const { docBytesById, viewPages, annotationsByPageId, scale, mainDocId, signingFlowMeta } = input;
 
         // Load all source PDFs with pdf-lib
         const srcDocs = new Map();
         for (const [docId, bytes] of docBytesById.entries()) {
             srcDocs.set(docId, await PDFDocument.load(bytes));
         }
+        const mainDocIdResolved = mainDocId || viewPages?.[0]?.docId;
 
         // Create output PDF
         const outDoc = await PDFDocument.create();
@@ -114,6 +119,27 @@ export class PDFExporter {
                 mimeType: 'application/json',
                 description: 'Signature audit trail'
             });
+        }
+
+        // Read existing signing metadata from main source (so expectedSigners persist) and write merged payload to Keywords
+        let previousMeta = null;
+        if (mainDocIdResolved) {
+            const mainSrc = srcDocs.get(mainDocIdResolved);
+            if (mainSrc && typeof mainSrc.getKeywords === 'function') {
+                const kw = mainSrc.getKeywords();
+                if (typeof kw === 'string') previousMeta = parseSigningMetadata(kw);
+            }
+        }
+        const expectedSigners = signingFlowMeta?.expectedSigners ?? previousMeta?.expectedSigners ?? [];
+        const emailTemplate = signingFlowMeta?.emailTemplate ?? previousMeta?.emailTemplate;
+        const originalSenderEmail = signingFlowMeta?.originalSenderEmail ?? previousMeta?.originalSenderEmail;
+        const completionToEmails = signingFlowMeta?.completionToEmails ?? previousMeta?.completionToEmails;
+        const completionCcEmails = signingFlowMeta?.completionCcEmails ?? previousMeta?.completionCcEmails;
+        const completionBccEmails = signingFlowMeta?.completionBccEmails ?? previousMeta?.completionBccEmails;
+        const signers = auditEntries.map((e) => ({ name: e.signerName || '', timestamp: e.timestamp || '' }));
+        const keywordsPayload = buildSigningKeywords({ signers, expectedSigners, emailTemplate, originalSenderEmail, completionToEmails, completionCcEmails, completionBccEmails });
+        if (keywordsPayload) {
+            outDoc.setKeywords(keywordsPayload);
         }
 
         outDoc.setModificationDate(new Date());

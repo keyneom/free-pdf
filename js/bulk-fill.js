@@ -67,6 +67,21 @@ export class BulkFillHandler {
     }
 
     /**
+     * Get page count of a PDF
+     * @param {ArrayBuffer} pdfBytes - PDF file bytes
+     * @returns {Promise<number>} Number of pages
+     */
+    async getPageCount(pdfBytes) {
+        try {
+            const pdfDoc = await PDFDocument.load(pdfBytes);
+            return pdfDoc.getPageCount();
+        } catch (error) {
+            console.error('Error getting page count:', error);
+            return 0;
+        }
+    }
+
+    /**
      * Extract form field names from a PDF
      * @param {ArrayBuffer} pdfBytes - PDF file bytes
      * @returns {Promise<Array<string>>} Array of form field names
