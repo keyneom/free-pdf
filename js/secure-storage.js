@@ -430,6 +430,36 @@ export const secureStorage = {
         saveVaultPayload(_activeVaultId, b64);
     },
 
+    /**
+     * Replace vault content with plain backup data (templates + signatures). No password; use for regular file import.
+     * @param {{ templates: object; signatures?: Array<{ id: string; name: string; dataUrl: string; type?: string; createdAt?: string }> }} data
+     */
+    async replaceWithPlainBackup(data) {
+        this._assertUnlocked();
+        if (!data || typeof data.templates !== 'object') throw new Error('Invalid backup: missing templates.');
+        _vault.templates = data.templates;
+        _vault.signatures = Array.isArray(data.signatures) ? data.signatures : [];
+        const b64 = await encrypt(JSON.stringify(_vault), _key);
+        saveVaultPayload(_activeVaultId, b64);
+    },
+
+    /**
+     * Set signatures list (e.g. after plain backup import). Replaces existing.
+     * @param {Array<{ id?: string; name: string; dataUrl: string; type?: string; createdAt?: string }>} list
+     */
+    async setSignatures(list) {
+        this._assertUnlocked();
+        _vault.signatures = Array.isArray(list) ? list.map((s) => ({
+            id: s.id || uid(),
+            name: s.name || 'Untitled',
+            dataUrl: s.dataUrl || '',
+            type: s.type || 'draw',
+            createdAt: s.createdAt || new Date().toISOString()
+        })) : [];
+        const b64 = await encrypt(JSON.stringify(_vault), _key);
+        saveVaultPayload(_activeVaultId, b64);
+    },
+
     /** Call once on app load to migrate from legacy single-vault format. */
     migrateFromLegacyIfNeeded() {
         migrateFromLegacyIfNeeded();

@@ -1039,6 +1039,15 @@ label.btn {
     padding-top: 16px;
     border-top: 1px solid var(--border-color);
 }
+.vault-backup-hint {
+    margin-bottom: 8px;
+}
+.vault-backup-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 16px;
+}
 .vault-import-form {
     margin-top: 12px;
 }
@@ -1049,6 +1058,64 @@ label.btn {
     display: flex;
     gap: 8px;
     margin-top: 12px;
+}
+.vault-transfer-receive-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 8px;
+}
+.vault-import-or {
+    font-size: 0.875rem;
+    color: var(--text-secondary);
+}
+.vault-transfer-panel {
+    margin-top: 16px;
+    padding-top: 16px;
+    border-top: 1px solid var(--border-color);
+}
+.vault-transfer-panel.hidden,
+.vault-receive-done.hidden {
+    display: none;
+}
+.vault-qr-wrap {
+    min-height: 260px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin: 12px 0;
+    background: #fff;
+    border-radius: var(--radius-md);
+    padding: 12px;
+}
+.vault-qr-wrap canvas,
+.vault-qr-wrap img {
+    max-width: 100%;
+    height: auto;
+}
+.vault-transfer-progress {
+    font-size: 0.875rem;
+    color: var(--text-secondary);
+    margin: 8px 0;
+}
+.vault-receive-video-wrap {
+    position: relative;
+    width: 100%;
+    max-width: 320px;
+    margin: 12px auto;
+    background: #000;
+    border-radius: var(--radius-md);
+    overflow: hidden;
+}
+.vault-receive-video-wrap video {
+    width: 100%;
+    display: block;
+}
+.vault-receive-done {
+    margin-top: 12px;
+    padding-top: 12px;
+    border-top: 1px solid var(--border-color);
 }
 
 .vault-locked-banner {

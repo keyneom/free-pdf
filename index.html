@@ -13,6 +13,9 @@
     <script src="https://unpkg.com/pdf-lib@1.17.1/dist/pdf-lib.min.js"></script>
     <!-- fontkit for custom fonts in pdf-lib -->
     <script src="https://unpkg.com/@pdf-lib/fontkit@1.1.1/dist/fontkit.umd.min.js"></script>
+    <!-- QR code: generate + scan for vault transfer -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js"></script>
 </head>
 <body>
     <div id="app">
@@ -441,7 +444,16 @@
                             <button id="vault-switch-btn" class="btn btn-secondary">Switch to another vault</button>
                             <button id="vault-rename-btn" class="btn btn-secondary">Rename vault</button>
                             <button id="vault-export-btn" class="btn btn-secondary">Export vault</button>
+                            <span class="vault-transfer-label">Transfer:</span>
+                            <button id="vault-transfer-qr-btn" class="btn btn-secondary">Show QR codes</button>
+                            <button id="vault-transfer-copy-btn" class="btn btn-secondary">Copy to clipboard</button>
                             <button id="vault-delete-current-btn" class="btn btn-secondary">Delete this vault</button>
+                        </div>
+                        <div id="vault-transfer-send-panel" class="vault-transfer-panel hidden">
+                            <p class="vault-hint">Point the other device’s camera at this screen. QR codes will cycle automatically until all parts are received.</p>
+                            <div id="vault-transfer-qr-wrap" class="vault-qr-wrap"></div>
+                            <p id="vault-transfer-progress" class="vault-transfer-progress"></p>
+                            <button id="vault-transfer-send-cancel" class="btn btn-secondary">Done</button>
                         </div>
                         <div id="vault-rename-form" class="vault-rename-form hidden">
                             <div class="send-field">
@@ -457,9 +469,45 @@
                         </div>
                     </div>
                     <div id="vault-import-section" class="vault-panel vault-import-section">
-                        <p class="vault-hint">Import a vault from another device (e.g. phone or laptop). Same password works.</p>
+                        <p class="vault-hint vault-backup-hint">Plain backup (no password): saved to or loaded from local storage.</p>
+                        <div class="vault-backup-actions">
+                            <button id="vault-export-plain-section-btn" class="btn btn-secondary">Export to file</button>
+                            <label for="vault-import-plain-input" class="btn btn-secondary">Import from file</label>
+                        </div>
+                        <input type="file" id="vault-import-plain-input" accept=".json,application/json" hidden>
+                        <p class="vault-hint">Import an encrypted vault from another device. Same password works.</p>
+                        <div class="vault-transfer-receive-actions">
+                            <button id="vault-receive-btn" class="btn btn-secondary">Scan QR</button>
+                            <button id="vault-receive-paste-btn" class="btn btn-secondary">Paste transfer data</button>
+                            <span class="vault-import-or">or</span>
+                            <label for="vault-import-input" class="btn btn-secondary">Choose vault file</label>
+                        </div>
+                        <div id="vault-paste-panel" class="vault-transfer-panel hidden">
+                            <p class="vault-hint">Paste the transfer data (from Copy on the other device) below.</p>
+                            <textarea id="vault-paste-input" class="vault-paste-input" placeholder="Paste here..." rows="4"></textarea>
+                            <p id="vault-paste-error" class="vault-error hidden"></p>
+                            <button id="vault-paste-import-btn" class="btn btn-primary">Import</button>
+                            <button id="vault-paste-cancel" class="btn btn-secondary">Cancel</button>
+                        </div>
                         <input type="file" id="vault-import-input" accept=".json,application/json" hidden>
-                        <label for="vault-import-input" class="btn btn-secondary">Choose vault file</label>
+                        <div id="vault-receive-panel" class="vault-transfer-panel hidden">
+                            <p class="vault-hint">Point your camera at the other device’s screen. Keep scanning until all parts are received.</p>
+                            <div class="vault-receive-video-wrap">
+                                <video id="vault-receive-video" playsinline muted></video>
+                                <canvas id="vault-receive-canvas" hidden></canvas>
+                            </div>
+                            <p id="vault-receive-progress" class="vault-transfer-progress"></p>
+                            <button id="vault-receive-cancel" class="btn btn-secondary">Cancel</button>
+                        </div>
+                        <div id="vault-receive-done" class="vault-receive-done hidden">
+                            <p class="vault-hint">Vault received. Enter the vault password to import.</p>
+                            <div class="send-field">
+                                <label for="vault-receive-password">Password for vault</label>
+                                <input type="password" id="vault-receive-password" class="send-input" placeholder="Password" autocomplete="current-password">
+                            </div>
+                            <p id="vault-receive-error" class="vault-error hidden"></p>
+                            <button id="vault-receive-import-btn" class="btn btn-primary">Import as new vault</button>
+                        </div>
                         <div id="vault-import-form" class="vault-import-form hidden">
                             <div class="send-field">
                                 <label for="vault-import-password">Password for vault file</label>

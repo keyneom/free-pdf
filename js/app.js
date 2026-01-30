@@ -1667,12 +1667,36 @@ class PDFEditorApp {
         const vaultSwitchBtn = document.getElementById('vault-switch-btn');
         const vaultRenameBtn = document.getElementById('vault-rename-btn');
         const vaultExportBtn = document.getElementById('vault-export-btn');
+        const vaultTransferQrBtn = document.getElementById('vault-transfer-qr-btn');
+        const vaultTransferCopyBtn = document.getElementById('vault-transfer-copy-btn');
+        const vaultTransferSendPanel = document.getElementById('vault-transfer-send-panel');
+        const vaultTransferQrWrap = document.getElementById('vault-transfer-qr-wrap');
+        const vaultTransferProgress = document.getElementById('vault-transfer-progress');
+        const vaultTransferSendCancel = document.getElementById('vault-transfer-send-cancel');
+        const vaultReceiveBtn = document.getElementById('vault-receive-btn');
+        const vaultReceivePasteBtn = document.getElementById('vault-receive-paste-btn');
+        const vaultPastePanel = document.getElementById('vault-paste-panel');
+        const vaultPasteInput = document.getElementById('vault-paste-input');
+        const vaultPasteError = document.getElementById('vault-paste-error');
+        const vaultPasteImportBtn = document.getElementById('vault-paste-import-btn');
+        const vaultPasteCancel = document.getElementById('vault-paste-cancel');
+        const vaultReceivePanel = document.getElementById('vault-receive-panel');
+        const vaultReceiveVideo = document.getElementById('vault-receive-video');
+        const vaultReceiveCanvas = document.getElementById('vault-receive-canvas');
+        const vaultReceiveProgress = document.getElementById('vault-receive-progress');
+        const vaultReceiveCancel = document.getElementById('vault-receive-cancel');
+        const vaultReceiveDone = document.getElementById('vault-receive-done');
+        const vaultReceivePassword = document.getElementById('vault-receive-password');
+        const vaultReceiveError = document.getElementById('vault-receive-error');
+        const vaultReceiveImportBtn = document.getElementById('vault-receive-import-btn');
         const vaultDeleteCurrentBtn = document.getElementById('vault-delete-current-btn');
         const vaultRenameForm = document.getElementById('vault-rename-form');
         const vaultRenamePassword = document.getElementById('vault-rename-password');
         const vaultRenameNew = document.getElementById('vault-rename-new');
         const vaultRenameError = document.getElementById('vault-rename-error');
         const vaultRenameSave = document.getElementById('vault-rename-save');
+        const vaultExportPlainSectionBtn = document.getElementById('vault-export-plain-section-btn');
+        const vaultImportPlainInput = document.getElementById('vault-import-plain-input');
         const vaultImportInput = document.getElementById('vault-import-input');
         const vaultImportForm = document.getElementById('vault-import-form');
         const vaultImportPassword = document.getElementById('vault-import-password');
@@ -1684,6 +1708,11 @@ class PDFEditorApp {
         const templatesUnlockLink = document.getElementById('templates-unlock-link');
 
         let pendingImportData = null;
+        let vaultTransferIntervalId = null;
+        let vaultReceiveStream = null;
+        let vaultReceiveAnimationId = null;
+        const VAULT_QR_PREFIX = 'fpv:';
+        const VAULT_QR_CHUNK_SIZE = 1100;
 
         const hideCreate = () => {
             createPanel?.classList.add('hidden');
@@ -1711,6 +1740,30 @@ class PDFEditorApp {
             vaultImportError?.classList.add('hidden');
             if (vaultImportInput) vaultImportInput.value = '';
         };
+        const hideTransferPanels = () => {
+            if (vaultTransferIntervalId != null) {
+                clearInterval(vaultTransferIntervalId);
+                vaultTransferIntervalId = null;
+            }
+            vaultTransferSendPanel?.classList.add('hidden');
+            if (vaultTransferQrWrap) vaultTransferQrWrap.innerHTML = '';
+            vaultReceivePanel?.classList.add('hidden');
+            vaultReceiveDone?.classList.add('hidden');
+            if (vaultReceiveStream) {
+                vaultReceiveStream.getTracks().forEach((t) => t.stop());
+                vaultReceiveStream = null;
+            }
+            if (vaultReceiveVideo) vaultReceiveVideo.srcObject = null;
+            if (vaultReceiveAnimationId != null) {
+                cancelAnimationFrame(vaultReceiveAnimationId);
+                vaultReceiveAnimationId = null;
+            }
+            if (vaultReceivePassword) vaultReceivePassword.value = '';
+            vaultReceiveError?.classList.add('hidden');
+            vaultPastePanel?.classList.add('hidden');
+            if (vaultPasteInput) vaultPasteInput.value = '';
+            vaultPasteError?.classList.add('hidden');
+        };
         const populateUnlockSelect = () => {
             const reg = secureStorage.getRegistry();
             if (!unlockSelect) return;
@@ -1736,6 +1789,7 @@ class PDFEditorApp {
             hideUnlock();
             hideUnlocked();
             hideImportForm();
+            hideTransferPanels();
             if (panel === 'create') {
                 createPanel?.classList.remove('hidden');
             } else if (panel === 'unlock') {
@@ -1752,6 +1806,7 @@ class PDFEditorApp {
             hideUnlock();
             hideUnlocked();
             hideImportForm();
+            hideTransferPanels();
         };
         const refreshVaultModalState = () => {
             this.updateVaultUI();
@@ -1895,6 +1950,232 @@ class PDFEditorApp {
             }
         });
 
+        vaultExportPlainSectionBtn?.addEventListener('click', () => {
+            try {
+                const templatesJson = emailTemplates.exportJson();
+                const data = JSON.parse(templatesJson);
+                data.signatures = secureStorage.isUnlocked() ? secureStorage.getSignatures() : [];
+                const date = new Date().toISOString().slice(0, 10);
+                const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `free-pdf-backup-${date}.json`;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+            } catch (e) {
+                alert('Export failed: ' + (e instanceof Error ? e.message : String(e)));
+            }
+        });
+
+        vaultTransferQrBtn?.addEventListener('click', () => {
+            if (typeof QRCode === 'undefined') {
+                alert('QR code library not loaded.');
+                return;
+            }
+            try {
+                const data = secureStorage.exportVault();
+                const jsonStr = JSON.stringify(data);
+                const b64 = btoa(unescape(encodeURIComponent(jsonStr)));
+                const chunks = [];
+                for (let i = 0; i < b64.length; i += VAULT_QR_CHUNK_SIZE) {
+                    chunks.push(b64.slice(i, i + VAULT_QR_CHUNK_SIZE));
+                }
+                const total = chunks.length;
+                let index = 0;
+                const showChunk = () => {
+                    if (!vaultTransferQrWrap) return;
+                    vaultTransferQrWrap.innerHTML = '';
+                    const text = VAULT_QR_PREFIX + index + ':' + total + ':' + chunks[index];
+                    new QRCode(vaultTransferQrWrap, { text, width: 256, height: 256 });
+                    if (vaultTransferProgress) vaultTransferProgress.textContent = `Part ${index + 1} of ${total}`;
+                };
+                showChunk();
+                vaultTransferSendPanel?.classList.remove('hidden');
+                vaultTransferIntervalId = setInterval(() => {
+                    index = (index + 1) % total;
+                    showChunk();
+                }, 2000);
+            } catch (e) {
+                alert('Transfer failed: ' + (e instanceof Error ? e.message : String(e)));
+            }
+        });
+
+        vaultTransferCopyBtn?.addEventListener('click', async () => {
+            try {
+                const data = secureStorage.exportVault();
+                const jsonStr = JSON.stringify(data);
+                const b64 = btoa(unescape(encodeURIComponent(jsonStr)));
+                await navigator.clipboard.writeText(b64);
+                alert('Vault data copied to clipboard. Paste it on the other device in “Paste transfer data”.');
+            } catch (e) {
+                alert('Copy failed: ' + (e instanceof Error ? e.message : String(e)));
+            }
+        });
+
+        vaultTransferSendCancel?.addEventListener('click', () => {
+            if (vaultTransferIntervalId != null) clearInterval(vaultTransferIntervalId);
+            vaultTransferIntervalId = null;
+            vaultTransferSendPanel?.classList.add('hidden');
+            if (vaultTransferQrWrap) vaultTransferQrWrap.innerHTML = '';
+        });
+
+        vaultReceiveBtn?.addEventListener('click', async () => {
+            if (typeof jsQR === 'undefined') {
+                alert('QR scanner not loaded.');
+                return;
+            }
+            try {
+                vaultReceivePanel?.classList.remove('hidden');
+                vaultReceiveDone?.classList.add('hidden');
+                vaultReceiveProgress?.classList.remove('hidden');
+                if (vaultReceiveProgress) vaultReceiveProgress.textContent = 'Starting camera…';
+                const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+                vaultReceiveStream = stream;
+                if (vaultReceiveVideo) {
+                    vaultReceiveVideo.srcObject = stream;
+                    vaultReceiveVideo.setAttribute('playsinline', true);
+                    await vaultReceiveVideo.play();
+                }
+                const receivedParts = {};
+                let totalParts = -1;
+                const checkDone = () => {
+                    if (totalParts < 0) return false;
+                    for (let i = 0; i < totalParts; i++) if (!receivedParts[i]) return false;
+                    return true;
+                };
+                const tryDecode = () => {
+                    if (!vaultReceiveVideo || vaultReceiveVideo.readyState < 2 || !vaultReceiveCanvas) return;
+                    const w = vaultReceiveVideo.videoWidth;
+                    const h = vaultReceiveVideo.videoHeight;
+                    if (w === 0 || h === 0) return;
+                    vaultReceiveCanvas.width = w;
+                    vaultReceiveCanvas.height = h;
+                    const ctx = vaultReceiveCanvas.getContext('2d');
+                    ctx.drawImage(vaultReceiveVideo, 0, 0);
+                    const imageData = ctx.getImageData(0, 0, w, h);
+                    const result = jsQR(imageData.data, w, h);
+                    if (result && result.data.startsWith(VAULT_QR_PREFIX)) {
+                        const rest = result.data.slice(VAULT_QR_PREFIX.length);
+                        const firstColon = rest.indexOf(':');
+                        const secondColon = rest.indexOf(':', firstColon + 1);
+                        if (firstColon >= 0 && secondColon >= 0) {
+                            const partIndex = parseInt(rest.slice(0, firstColon), 10);
+                            const total = parseInt(rest.slice(firstColon + 1, secondColon), 10);
+                            const chunk = rest.slice(secondColon + 1);
+                            if (!isNaN(partIndex) && !isNaN(total)) {
+                                totalParts = total;
+                                receivedParts[partIndex] = chunk;
+                                const have = Object.keys(receivedParts).length;
+                                if (vaultReceiveProgress) vaultReceiveProgress.textContent = `Received ${have} of ${total} parts`;
+                                if (checkDone()) {
+                                    if (vaultReceiveStream) {
+                                        vaultReceiveStream.getTracks().forEach((t) => t.stop());
+                                        vaultReceiveStream = null;
+                                    }
+                                    if (vaultReceiveVideo) vaultReceiveVideo.srcObject = null;
+                                    if (vaultReceiveAnimationId != null) cancelAnimationFrame(vaultReceiveAnimationId);
+                                    vaultReceiveAnimationId = null;
+                                    const combined = Array.from({ length: total }, (_, i) => receivedParts[i]).join('');
+                                    try {
+                                        const jsonStr = decodeURIComponent(escape(atob(combined)));
+                                        const data = JSON.parse(jsonStr);
+                                        if (!data.name || !data.salt || !data.payload) throw new Error('Invalid data');
+                                        pendingImportData = data;
+                                        vaultReceivePanel?.classList.add('hidden');
+                                        vaultReceiveProgress?.classList.add('hidden');
+                                        vaultReceiveDone?.classList.remove('hidden');
+                                        if (vaultReceivePassword) vaultReceivePassword.value = '';
+                                        vaultReceiveError?.classList.add('hidden');
+                                    } catch (err) {
+                                        if (vaultReceiveProgress) vaultReceiveProgress.textContent = 'Invalid data. Try again.';
+                                    }
+                                    return;
+                                }
+                            }
+                        }
+                    }
+                };
+                const tick = () => {
+                    tryDecode();
+                    vaultReceiveAnimationId = requestAnimationFrame(tick);
+                };
+                tick();
+            } catch (e) {
+                vaultReceivePanel?.classList.add('hidden');
+                alert('Camera failed: ' + (e instanceof Error ? e.message : String(e)));
+            }
+        });
+
+        vaultReceiveCancel?.addEventListener('click', () => {
+            if (vaultReceiveStream) {
+                vaultReceiveStream.getTracks().forEach((t) => t.stop());
+                vaultReceiveStream = null;
+            }
+            if (vaultReceiveVideo) vaultReceiveVideo.srcObject = null;
+            if (vaultReceiveAnimationId != null) cancelAnimationFrame(vaultReceiveAnimationId);
+            vaultReceiveAnimationId = null;
+            vaultReceivePanel?.classList.add('hidden');
+            vaultReceiveDone?.classList.add('hidden');
+        });
+
+        vaultReceivePasteBtn?.addEventListener('click', () => {
+            vaultPastePanel?.classList.remove('hidden');
+            if (vaultPasteInput) vaultPasteInput.value = '';
+            vaultPasteError?.classList.add('hidden');
+        });
+
+        vaultPasteCancel?.addEventListener('click', () => {
+            vaultPastePanel?.classList.add('hidden');
+            if (vaultPasteInput) vaultPasteInput.value = '';
+        });
+
+        vaultPasteImportBtn?.addEventListener('click', () => {
+            vaultPasteError?.classList.add('hidden');
+            const raw = (vaultPasteInput?.value || '').trim();
+            if (!raw) {
+                vaultPasteError?.classList.remove('hidden');
+                if (vaultPasteError) vaultPasteError.textContent = 'Paste the transfer data first.';
+                return;
+            }
+            try {
+                const jsonStr = decodeURIComponent(escape(atob(raw)));
+                const data = JSON.parse(jsonStr);
+                if (!data.name || !data.salt || !data.payload) throw new Error('Invalid vault data.');
+                pendingImportData = data;
+                vaultPastePanel?.classList.add('hidden');
+                if (vaultPasteInput) vaultPasteInput.value = '';
+                vaultReceiveDone?.classList.remove('hidden');
+                if (vaultReceivePassword) vaultReceivePassword.value = '';
+                vaultReceiveError?.classList.add('hidden');
+            } catch (err) {
+                vaultPasteError?.classList.remove('hidden');
+                vaultPasteError.textContent = err instanceof Error ? err.message : 'Invalid data.';
+            }
+        });
+
+        vaultReceiveImportBtn?.addEventListener('click', async () => {
+            const pw = (vaultReceivePassword?.value || '').trim();
+            vaultReceiveError?.classList.add('hidden');
+            if (!pw) { vaultReceiveError.textContent = 'Enter password for vault.'; vaultReceiveError?.classList.remove('hidden'); return; }
+            if (!pendingImportData) return;
+            try {
+                await secureStorage.importVaultAsNew(pendingImportData, pw);
+                setTemplatesBackend(vaultBackend());
+                vaultReceiveDone?.classList.add('hidden');
+                pendingImportData = null;
+                if (vaultReceivePassword) vaultReceivePassword.value = '';
+                hideUnlock();
+                showUnlockedPanel();
+                refreshVaultModalState();
+            } catch (e) {
+                vaultReceiveError.textContent = e instanceof Error ? e.message : 'Import failed.';
+                vaultReceiveError?.classList.remove('hidden');
+            }
+        });
+
         vaultDeleteCurrentBtn?.addEventListener('click', async () => {
             const name = secureStorage.getActiveVaultName();
             const pw = prompt(`Enter password for "${name}" to delete this vault. This cannot be undone.`);
@@ -1923,6 +2204,33 @@ class PDFEditorApp {
                 vaultImportReplaceBtn?.classList.toggle('hidden', !secureStorage.isUnlocked());
             } catch (err) {
                 alert('Invalid file: ' + (err instanceof Error ? err.message : String(err)));
+            }
+            e.target.value = '';
+        });
+
+        vaultImportPlainInput?.addEventListener('change', async (e) => {
+            const f = e.target.files?.[0];
+            if (!f) return;
+            try {
+                const text = await f.text();
+                const data = JSON.parse(text);
+                if (!data.templates || !Array.isArray(data.templates)) throw new Error('Invalid backup file: missing templates.');
+                if (secureStorage.hasVault() && !secureStorage.isUnlocked()) {
+                    alert('Unlock a vault to import. Plain backup includes templates and signatures.');
+                    e.target.value = '';
+                    return;
+                }
+                const payload = { version: data.version || 1, defaultId: data.defaultId || 'default', templates: data.templates };
+                const { imported, errors } = await emailTemplates.importJson(JSON.stringify(payload), { replace: true });
+                if (secureStorage.isUnlocked() && Array.isArray(data.signatures) && data.signatures.length > 0) {
+                    await secureStorage.setSignatures(data.signatures);
+                }
+                if (errors.length > 0) alert('Imported with notes: ' + errors.join(' '));
+                else alert(`Imported ${imported} template(s)` + (secureStorage.isUnlocked() && data.signatures?.length ? ` and ${data.signatures.length} signature(s).` : '.'));
+                refreshVaultModalState();
+                this.renderTemplatesList();
+            } catch (err) {
+                alert('Import failed: ' + (err instanceof Error ? err.message : String(err)));
             }
             e.target.value = '';
         });
