@@ -6,7 +6,8 @@ import { PDFHandler } from './pdf-handler.js';
 import { CanvasManager } from './canvas-manager.js';
 import { PDFExporter } from './export.js';
 import { SignaturePad } from './signature-pad.js';
-import { emailTemplates } from './email-templates.js';
+import { emailTemplates, setTemplatesBackend, getDefaultOnlyTemplatesStore } from './email-templates.js';
+import { secureStorage } from './secure-storage.js';
 import { BulkFillHandler } from './bulk-fill.js';
 
 function escapeHtml(s) {
@@ -31,6 +32,8 @@ class PDFEditorApp {
         this.currentScale = 1.0;
         this.fileName = 'document.pdf';
         this.documentHash = null;
+        this._pendingSignatureImage = null;
+        this._selectedSavedSig = null;
 
         this.init();
     }
@@ -44,6 +47,7 @@ class PDFEditorApp {
         this.setupDragAndDrop();
         this.setupKeyboardShortcuts();
         this.initSignaturePad();
+        this.setupVault();
         this.setupSendModal();
         this.setupTemplatesModal();
         this.setupTemplateEditModal();
@@ -576,16 +580,24 @@ class PDFEditorApp {
         emailInput?.addEventListener('input', updateApplyState);
 
         // Tab switching
+        const drawArea = document.getElementById('sig-draw-area');
+        const typeArea = document.getElementById('sig-type-area');
+        const imageArea = document.getElementById('sig-image-area');
         tabs.forEach(tab => {
             tab.addEventListener('click', () => {
                 tabs.forEach(t => t.classList.remove('active'));
                 tab.classList.add('active');
 
                 const tabName = tab.dataset.tab;
-                document.getElementById('sig-draw-area').classList.toggle('active', tabName === 'draw');
-                document.getElementById('sig-type-area').classList.toggle('active', tabName === 'type');
+                drawArea?.classList.toggle('active', tabName === 'draw');
+                typeArea?.classList.toggle('active', tabName === 'type');
+                imageArea?.classList.toggle('active', tabName === 'image');
 
-                this.signaturePad.setMode(tabName);
+                this._selectedSavedSig = null;
+                if (tabName !== 'image') this._pendingSignatureImage = null;
+                this._clearImagePreview();
+                if (tabName === 'draw' || tabName === 'type') this.signaturePad.setMode(tabName);
+                this._refreshSignatureModalExtras();
                 updateApplyState();
             });
         });
@@ -611,6 +623,50 @@ class PDFEditorApp {
             sigCanvas.addEventListener('touchend', updateApplyState);
         }
 
+        // Image tab: file input, preview, clear
+        const imageInput = document.getElementById('sig-image-input');
+        const imagePreviewWrap = document.getElementById('sig-image-preview-wrap');
+        const imagePreview = document.getElementById('sig-image-preview');
+        const imageClear = document.getElementById('sig-image-clear');
+        imageInput?.addEventListener('change', (e) => {
+            const f = e.target.files?.[0];
+            if (!f) return;
+            const r = new FileReader();
+            r.onload = () => {
+                this._pendingSignatureImage = r.result;
+                if (imagePreview) imagePreview.src = this._pendingSignatureImage;
+                imagePreviewWrap?.classList.remove('hidden');
+                updateApplyState();
+                this._refreshSignatureModalExtras();
+            };
+            r.readAsDataURL(f);
+            imageInput.value = '';
+        });
+        imageClear?.addEventListener('click', () => {
+            this._pendingSignatureImage = null;
+            this._clearImagePreview();
+            updateApplyState();
+            this._refreshSignatureModalExtras();
+        });
+
+        // Save to My Signatures
+        const saveName = document.getElementById('sig-save-name');
+        const saveBtn = document.getElementById('sig-save-btn');
+        saveBtn?.addEventListener('click', async () => {
+            const name = (saveName?.value || '').trim();
+            if (!name) { alert('Enter a name for this signature.'); return; }
+            const dataUrl = this._signatureDataUrlForSave();
+            if (!dataUrl) return;
+            const type = this._activeSignatureTab() === 'image' ? 'image' : (this.signaturePad.mode === 'type' ? 'type' : 'draw');
+            try {
+                await secureStorage.addSignature({ name, dataUrl, type });
+                if (saveName) saveName.value = '';
+                this._refreshSignatureModalExtras();
+            } catch (e) {
+                alert('Failed to save: ' + (e instanceof Error ? e.message : String(e)));
+            }
+        });
+
         // Apply signature
         applyBtn.addEventListener('click', () => {
             if (!this.validateAndApplySignature()) return;
@@ -623,6 +679,61 @@ class PDFEditorApp {
                 this.hideSignatureModal();
             }
         });
+    }
+
+    _clearImagePreview() {
+        const wrap = document.getElementById('sig-image-preview-wrap');
+        const img = document.getElementById('sig-image-preview');
+        const input = document.getElementById('sig-image-input');
+        if (img) img.src = '';
+        wrap?.classList.add('hidden');
+        if (input) input.value = '';
+    }
+
+    _activeSignatureTab() {
+        const t = this.signatureModal?.querySelector('.sig-tab.active');
+        return t?.dataset?.tab || 'draw';
+    }
+
+    _signatureDataUrlForSave() {
+        if (this._selectedSavedSig) return this._selectedSavedSig.dataUrl;
+        const tab = this._activeSignatureTab();
+        if (tab === 'image') return this._pendingSignatureImage || null;
+        if (tab === 'draw' && this.signaturePad.isEmpty()) return null;
+        if (tab === 'type' && !this.signaturePad.typedText?.trim()) return null;
+        return this.signaturePad.getDataUrl() || null;
+    }
+
+    _refreshSignatureModalExtras() {
+        const unlocked = secureStorage.hasVault() && secureStorage.isUnlocked();
+        const mySig = document.getElementById('sig-my-signatures');
+        const saveCurrent = document.getElementById('sig-save-current');
+        const hasSig = !!this._signatureDataUrlForSave();
+
+        if (mySig) mySig.classList.toggle('hidden', !unlocked);
+        if (saveCurrent) saveCurrent.classList.toggle('hidden', !unlocked || !hasSig);
+
+        if (unlocked) {
+            const list = document.getElementById('sig-saved-list');
+            if (!list) return;
+            const sigs = secureStorage.getSignatures();
+            list.innerHTML = sigs.length === 0
+                ? '<span class="sig-saved-empty">No saved signatures.</span>'
+                : sigs.map((s) => `<button type="button" class="sig-saved-item" data-id="${escapeHtml(s.id)}" title="${escapeHtml(s.name)}"><img src="${(s.dataUrl || '').replace(/"/g, '&quot;')}" alt=""><span>${escapeHtml(s.name)}</span></button>`).join('');
+            list.querySelectorAll('.sig-saved-item').forEach((btn) => {
+                btn.addEventListener('click', () => {
+                    const id = btn.dataset.id;
+                    const sig = secureStorage.getSignatures().find((x) => x.id === id);
+                    if (!sig) return;
+                    this._selectedSavedSig = sig;
+                    this.signatureModal?.querySelectorAll('.sig-tab').forEach((t) => t.classList.remove('active'));
+                    document.getElementById('sig-draw-area')?.classList.remove('active');
+                    document.getElementById('sig-type-area')?.classList.remove('active');
+                    document.getElementById('sig-image-area')?.classList.remove('active');
+                    this.updateSignatureApplyState();
+                });
+            });
+        }
     }
 
     /**
@@ -638,9 +749,13 @@ class PDFEditorApp {
         const intent = intentCheck.checked;
         const consent = consentCheck.checked;
         const name = (nameInput.value || '').trim();
-        const hasSignature = this.signaturePad.mode === 'draw'
-            ? !this.signaturePad.isEmpty()
-            : !!this.signaturePad.typedText?.trim();
+        const tab = this._activeSignatureTab();
+        let hasSignature = !!this._selectedSavedSig;
+        if (!hasSignature) {
+            if (tab === 'image') hasSignature = !!this._pendingSignatureImage;
+            else if (tab === 'draw') hasSignature = !this.signaturePad.isEmpty();
+            else hasSignature = !!this.signaturePad.typedText?.trim();
+        }
 
         applyBtn.disabled = !(intent && consent && name && hasSignature);
     }
@@ -661,7 +776,9 @@ class PDFEditorApp {
         const consent = consentCheck.checked;
         const name = (nameInput.value || '').trim();
         const email = (emailInput?.value || '').trim();
-        const dataUrl = this.signaturePad.getDataUrl();
+        const dataUrl = this._selectedSavedSig
+            ? this._selectedSavedSig.dataUrl
+            : (this._activeSignatureTab() === 'image' ? this._pendingSignatureImage : this.signaturePad.getDataUrl());
 
         if (!intent || !consent || !name || !dataUrl) return false;
 
@@ -685,6 +802,10 @@ class PDFEditorApp {
      * Show signature modal
      */
     showSignatureModal() {
+        this._pendingSignatureImage = null;
+        this._selectedSavedSig = null;
+        this._clearImagePreview();
+
         this.signatureModal.classList.remove('hidden');
         this.signaturePad.clear();
         this.signaturePad.setTypedText('');
@@ -692,6 +813,14 @@ class PDFEditorApp {
         if (textInput) textInput.value = '';
         const preview = document.getElementById('sig-preview');
         if (preview) preview.textContent = 'Preview';
+
+        this.signatureModal?.querySelectorAll('.sig-tab').forEach((t) => t.classList.remove('active'));
+        const drawTab = this.signatureModal?.querySelector('.sig-tab[data-tab="draw"]');
+        if (drawTab) drawTab.classList.add('active');
+        document.getElementById('sig-draw-area')?.classList.add('active');
+        document.getElementById('sig-type-area')?.classList.remove('active');
+        document.getElementById('sig-image-area')?.classList.remove('active');
+        this.signaturePad.setMode('draw');
 
         const intentCheck = document.getElementById('sig-intent');
         const consentCheck = document.getElementById('sig-consent');
@@ -704,6 +833,7 @@ class PDFEditorApp {
         if (emailInput) emailInput.value = '';
         if (applyBtn) applyBtn.disabled = true;
 
+        this._refreshSignatureModalExtras();
         this.updateSignatureApplyState();
     }
 
@@ -869,6 +999,370 @@ class PDFEditorApp {
         this.sendModal.classList.add('hidden');
     }
 
+    /**
+     * Vault: password-protected storage for templates & signatures.
+     * No vault -> legacy localStorage. Vault exists -> locked (default-only) or unlocked (vault backend).
+     */
+    setupVault() {
+        secureStorage.migrateFromLegacyIfNeeded();
+
+        const lockedBackend = {
+            loadStore: getDefaultOnlyTemplatesStore,
+            saveStore: () => Promise.resolve()
+        };
+        const vaultBackend = () => ({
+            loadStore: () => secureStorage.getTemplatesStore(),
+            saveStore: (s) => secureStorage.saveTemplatesStore(s)
+        });
+
+        if (!secureStorage.hasVault()) {
+            setTemplatesBackend(null);
+        } else {
+            setTemplatesBackend(secureStorage.isUnlocked() ? vaultBackend() : lockedBackend);
+        }
+        this.updateVaultUI();
+
+        const vaultModal = document.getElementById('vault-modal');
+        const vaultClose = document.getElementById('vault-modal-close');
+        const createPanel = document.getElementById('vault-create-panel');
+        const unlockPanel = document.getElementById('vault-unlock-panel');
+        const createName = document.getElementById('vault-create-name');
+        const createPw = document.getElementById('vault-create-password');
+        const createConfirm = document.getElementById('vault-create-confirm');
+        const createError = document.getElementById('vault-create-error');
+        const createBtn = document.getElementById('vault-create-btn');
+        const unlockSelect = document.getElementById('vault-unlock-select');
+        const unlockSelectWrap = document.getElementById('vault-unlock-select-wrap');
+        const unlockSingleWrap = document.getElementById('vault-unlock-single-wrap');
+        const unlockSingleName = document.getElementById('vault-unlock-single-name');
+        const unlockHint = document.getElementById('vault-unlock-hint');
+        const unlockPw = document.getElementById('vault-unlock-password');
+        const unlockError = document.getElementById('vault-unlock-error');
+        const unlockBtn = document.getElementById('vault-unlock-btn');
+        const vaultDeleteBtn = document.getElementById('vault-delete-btn');
+        const createAnotherLink = document.getElementById('vault-create-another-link');
+        const unlockedPanel = document.getElementById('vault-unlocked-panel');
+        const unlockedNameEl = document.getElementById('vault-unlocked-name');
+        const vaultLockBtn = document.getElementById('vault-lock-btn');
+        const vaultSwitchBtn = document.getElementById('vault-switch-btn');
+        const vaultRenameBtn = document.getElementById('vault-rename-btn');
+        const vaultExportBtn = document.getElementById('vault-export-btn');
+        const vaultDeleteCurrentBtn = document.getElementById('vault-delete-current-btn');
+        const vaultRenameForm = document.getElementById('vault-rename-form');
+        const vaultRenamePassword = document.getElementById('vault-rename-password');
+        const vaultRenameNew = document.getElementById('vault-rename-new');
+        const vaultRenameError = document.getElementById('vault-rename-error');
+        const vaultRenameSave = document.getElementById('vault-rename-save');
+        const vaultImportInput = document.getElementById('vault-import-input');
+        const vaultImportForm = document.getElementById('vault-import-form');
+        const vaultImportPassword = document.getElementById('vault-import-password');
+        const vaultImportError = document.getElementById('vault-import-error');
+        const vaultImportNewBtn = document.getElementById('vault-import-new-btn');
+        const vaultImportReplaceBtn = document.getElementById('vault-import-replace-btn');
+        const btnVault = document.getElementById('btn-vault');
+        const btnVaultLabel = document.getElementById('btn-vault-label');
+        const templatesUnlockLink = document.getElementById('templates-unlock-link');
+
+        let pendingImportData = null;
+
+        const hideCreate = () => {
+            createPanel?.classList.add('hidden');
+            if (createName) createName.value = '';
+            if (createPw) createPw.value = '';
+            if (createConfirm) createConfirm.value = '';
+            createError?.classList.add('hidden');
+        };
+        const hideUnlock = () => {
+            unlockPanel?.classList.add('hidden');
+            if (unlockPw) unlockPw.value = '';
+            unlockError?.classList.add('hidden');
+        };
+        const hideUnlocked = () => {
+            unlockedPanel?.classList.add('hidden');
+            vaultRenameForm?.classList.add('hidden');
+            if (vaultRenamePassword) vaultRenamePassword.value = '';
+            if (vaultRenameNew) vaultRenameNew.value = '';
+            vaultRenameError?.classList.add('hidden');
+        };
+        const hideImportForm = () => {
+            vaultImportForm?.classList.add('hidden');
+            pendingImportData = null;
+            if (vaultImportPassword) vaultImportPassword.value = '';
+            vaultImportError?.classList.add('hidden');
+            if (vaultImportInput) vaultImportInput.value = '';
+        };
+        const populateUnlockSelect = () => {
+            const reg = secureStorage.getRegistry();
+            if (!unlockSelect) return;
+            unlockSelect.innerHTML = reg.map((r) => `<option value="${escapeHtml(r.id)}">${escapeHtml(r.name)}</option>`).join('');
+            const single = reg.length === 1;
+            if (unlockSelectWrap) unlockSelectWrap.classList.toggle('hidden', single);
+            if (unlockSingleWrap) unlockSingleWrap.classList.toggle('hidden', !single);
+            if (unlockSingleName && single) unlockSingleName.textContent = reg[0].name;
+            if (unlockHint) unlockHint.textContent = single ? 'Enter the vault password.' : 'Select a vault and enter its password.';
+        };
+        const getSelectedUnlockVaultId = () => unlockSelect?.value || (secureStorage.getRegistry()[0]?.id ?? null);
+        const getSelectedUnlockVaultName = () => {
+            const id = getSelectedUnlockVaultId();
+            const r = secureStorage.getRegistry().find((x) => x.id === id);
+            return r?.name ?? '';
+        };
+        const showUnlockedPanel = () => {
+            if (unlockedNameEl) unlockedNameEl.textContent = secureStorage.getActiveVaultName();
+            unlockedPanel?.classList.remove('hidden');
+        };
+        const showVaultModal = (panel) => {
+            hideCreate();
+            hideUnlock();
+            hideUnlocked();
+            hideImportForm();
+            if (panel === 'create') {
+                createPanel?.classList.remove('hidden');
+            } else if (panel === 'unlock') {
+                populateUnlockSelect();
+                unlockPanel?.classList.remove('hidden');
+            } else if (panel === 'unlocked') {
+                showUnlockedPanel();
+            }
+            vaultModal?.classList.remove('hidden');
+        };
+        const hideVaultModal = () => {
+            vaultModal?.classList.add('hidden');
+            hideCreate();
+            hideUnlock();
+            hideUnlocked();
+            hideImportForm();
+        };
+        const refreshVaultModalState = () => {
+            this.updateVaultUI();
+            this.renderTemplatesList();
+            this.refreshSendModal();
+        };
+
+        vaultClose?.addEventListener('click', hideVaultModal);
+        vaultModal?.addEventListener('click', (e) => { if (e.target === vaultModal) hideVaultModal(); });
+
+        btnVault?.addEventListener('click', () => {
+            if (!secureStorage.hasVault()) showVaultModal('create');
+            else if (secureStorage.isUnlocked()) showVaultModal('unlocked');
+            else showVaultModal('unlock');
+        });
+
+        createBtn?.addEventListener('click', async () => {
+            const name = (createName?.value || '').trim();
+            const pw = (createPw?.value || '').trim();
+            const conf = (createConfirm?.value || '').trim();
+            createError?.classList.add('hidden');
+            if (!pw) { createError.textContent = 'Enter a password.'; createError?.classList.remove('hidden'); return; }
+            if (pw !== conf) { createError.textContent = 'Passwords do not match.'; createError?.classList.remove('hidden'); return; }
+            try {
+                await secureStorage.createVault(name || 'Unnamed', pw);
+                setTemplatesBackend(vaultBackend());
+                hideVaultModal();
+                this.updateVaultUI();
+                this.renderTemplatesList();
+                this.refreshSendModal();
+            } catch (e) {
+                createError.textContent = e instanceof Error ? e.message : 'Create failed.';
+                createError?.classList.remove('hidden');
+            }
+        });
+
+        unlockBtn?.addEventListener('click', async () => {
+            const id = getSelectedUnlockVaultId();
+            const pw = (unlockPw?.value || '').trim();
+            unlockError?.classList.add('hidden');
+            if (!id) { unlockError.textContent = 'Select a vault.'; unlockError?.classList.remove('hidden'); return; }
+            if (!pw) { unlockError.textContent = 'Enter your password.'; unlockError?.classList.remove('hidden'); return; }
+            try {
+                await secureStorage.unlock(id, pw);
+                setTemplatesBackend(vaultBackend());
+                hideUnlock();
+                showUnlockedPanel();
+                refreshVaultModalState();
+            } catch (e) {
+                unlockError.textContent = e instanceof Error ? e.message : 'Unlock failed.';
+                unlockError?.classList.remove('hidden');
+            }
+        });
+
+        vaultDeleteBtn?.addEventListener('click', async () => {
+            const id = getSelectedUnlockVaultId();
+            const name = getSelectedUnlockVaultName();
+            const pw = (unlockPw?.value || '').trim();
+            unlockError?.classList.add('hidden');
+            if (!id) { unlockError.textContent = 'Select a vault.'; unlockError?.classList.remove('hidden'); return; }
+            if (!pw) { unlockError.textContent = 'Enter password to confirm deletion.'; unlockError?.classList.remove('hidden'); return; }
+            if (!confirm(`Delete vault "${name}"? This cannot be undone.`)) return;
+            try {
+                await secureStorage.deleteVault(id, pw);
+                if (!secureStorage.hasVault()) {
+                    setTemplatesBackend(null);
+                    hideVaultModal();
+                } else {
+                    populateUnlockSelect();
+                    if (unlockPw) unlockPw.value = '';
+                }
+                refreshVaultModalState();
+            } catch (e) {
+                unlockError.textContent = e instanceof Error ? e.message : 'Delete failed.';
+                unlockError?.classList.remove('hidden');
+            }
+        });
+
+        vaultLockBtn?.addEventListener('click', () => {
+            secureStorage.lock();
+            setTemplatesBackend(lockedBackend);
+            hideUnlocked();
+            if (secureStorage.hasVault()) {
+                populateUnlockSelect();
+                unlockPanel?.classList.remove('hidden');
+            }
+            hideVaultModal();
+            refreshVaultModalState();
+        });
+
+        vaultSwitchBtn?.addEventListener('click', () => {
+            secureStorage.lock();
+            setTemplatesBackend(lockedBackend);
+            hideUnlocked();
+            populateUnlockSelect();
+            unlockPanel?.classList.remove('hidden');
+            if (unlockPw) unlockPw.value = '';
+            unlockError?.classList.add('hidden');
+            refreshVaultModalState();
+        });
+
+        vaultRenameBtn?.addEventListener('click', () => {
+            vaultRenameForm?.classList.toggle('hidden', vaultRenameForm?.classList.contains('hidden'));
+            if (vaultRenameNew) vaultRenameNew.value = secureStorage.getActiveVaultName();
+        });
+
+        vaultRenameSave?.addEventListener('click', async () => {
+            const pw = (vaultRenamePassword?.value || '').trim();
+            const newName = (vaultRenameNew?.value || '').trim();
+            vaultRenameError?.classList.add('hidden');
+            if (!pw) { vaultRenameError.textContent = 'Enter current password.'; vaultRenameError?.classList.remove('hidden'); return; }
+            if (!newName) { vaultRenameError.textContent = 'Enter a new name.'; vaultRenameError?.classList.remove('hidden'); return; }
+            try {
+                await secureStorage.renameVault(secureStorage.getActiveVaultId(), pw, newName);
+                vaultRenameForm?.classList.add('hidden');
+                if (vaultRenamePassword) vaultRenamePassword.value = '';
+                if (unlockedNameEl) unlockedNameEl.textContent = secureStorage.getActiveVaultName();
+                refreshVaultModalState();
+            } catch (e) {
+                vaultRenameError.textContent = e instanceof Error ? e.message : 'Rename failed.';
+                vaultRenameError?.classList.remove('hidden');
+            }
+        });
+
+        vaultExportBtn?.addEventListener('click', () => {
+            try {
+                const data = secureStorage.exportVault();
+                const name = (data.name || 'vault').replace(/[^a-zA-Z0-9-_]/g, '-');
+                const date = new Date().toISOString().slice(0, 10);
+                const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `free-pdf-vault-${name}-${date}.json`;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+            } catch (e) {
+                alert('Export failed: ' + (e instanceof Error ? e.message : String(e)));
+            }
+        });
+
+        vaultDeleteCurrentBtn?.addEventListener('click', async () => {
+            const name = secureStorage.getActiveVaultName();
+            const pw = prompt(`Enter password for "${name}" to delete this vault. This cannot be undone.`);
+            if (pw == null) return;
+            try {
+                await secureStorage.deleteVault(secureStorage.getActiveVaultId(), pw.trim());
+                setTemplatesBackend(secureStorage.hasVault() ? lockedBackend : null);
+                hideVaultModal();
+                refreshVaultModalState();
+            } catch (e) {
+                alert('Delete failed: ' + (e instanceof Error ? e.message : String(e)));
+            }
+        });
+
+        vaultImportInput?.addEventListener('change', async (e) => {
+            const f = e.target.files?.[0];
+            if (!f) return;
+            try {
+                const text = await f.text();
+                const data = JSON.parse(text);
+                if (!data.name || !data.salt || !data.payload) throw new Error('Invalid vault file.');
+                pendingImportData = data;
+                vaultImportForm?.classList.remove('hidden');
+                if (vaultImportPassword) vaultImportPassword.value = '';
+                vaultImportError?.classList.add('hidden');
+                vaultImportReplaceBtn?.classList.toggle('hidden', !secureStorage.isUnlocked());
+            } catch (err) {
+                alert('Invalid file: ' + (err instanceof Error ? err.message : String(err)));
+            }
+            e.target.value = '';
+        });
+
+        vaultImportNewBtn?.addEventListener('click', async () => {
+            const pw = (vaultImportPassword?.value || '').trim();
+            vaultImportError?.classList.add('hidden');
+            if (!pw) { vaultImportError.textContent = 'Enter password for vault file.'; vaultImportError?.classList.remove('hidden'); return; }
+            if (!pendingImportData) return;
+            try {
+                await secureStorage.importVaultAsNew(pendingImportData, pw);
+                setTemplatesBackend(vaultBackend());
+                hideImportForm();
+                hideUnlock();
+                showUnlockedPanel();
+                refreshVaultModalState();
+            } catch (e) {
+                vaultImportError.textContent = e instanceof Error ? e.message : 'Import failed.';
+                vaultImportError?.classList.remove('hidden');
+            }
+        });
+
+        vaultImportReplaceBtn?.addEventListener('click', async () => {
+            const pw = (vaultImportPassword?.value || '').trim();
+            vaultImportError?.classList.add('hidden');
+            if (!pw) { vaultImportError.textContent = 'Enter password for vault file.'; vaultImportError?.classList.remove('hidden'); return; }
+            if (!pendingImportData) return;
+            try {
+                await secureStorage.replaceVaultWithImport(pendingImportData, pw);
+                hideImportForm();
+                refreshVaultModalState();
+            } catch (e) {
+                vaultImportError.textContent = e instanceof Error ? e.message : 'Replace failed.';
+                vaultImportError?.classList.remove('hidden');
+            }
+        });
+
+        createAnotherLink?.addEventListener('click', (e) => {
+            e.preventDefault();
+            hideUnlock();
+            createPanel?.classList.remove('hidden');
+            if (createName) createName.value = '';
+        });
+
+        templatesUnlockLink?.addEventListener('click', (e) => {
+            e.preventDefault();
+            this.hideTemplatesModal();
+            showVaultModal('unlock');
+        });
+    }
+
+    updateVaultUI() {
+        const btn = document.getElementById('btn-vault');
+        const label = document.getElementById('btn-vault-label');
+        if (!btn || !label) return;
+        if (!secureStorage.hasVault()) label.textContent = 'Create vault';
+        else if (secureStorage.isUnlocked()) label.textContent = 'Lock ' + (secureStorage.getActiveVaultName() || 'vault');
+        else label.textContent = 'Unlock vault';
+    }
+
     setupSendModal() {
         const modal = this.sendModal;
         const closeBtn = document.getElementById('send-modal-close');
@@ -907,6 +1401,15 @@ class PDFEditorApp {
     }
 
     showTemplatesModal() {
+        const locked = secureStorage.hasVault() && !secureStorage.isUnlocked();
+        const banner = document.getElementById('templates-vault-locked');
+        const addBtn = document.getElementById('tpl-add');
+        const importInput = document.getElementById('tpl-import-input');
+        const importLabel = document.querySelector('label[for="tpl-import-input"]');
+        if (banner) banner.classList.toggle('hidden', !locked);
+        if (addBtn) addBtn.disabled = locked;
+        if (importInput) importInput.disabled = locked;
+        if (importLabel) importLabel.classList.toggle('disabled', locked);
         this.renderTemplatesList();
         this.templatesModal.classList.remove('hidden');
     }
@@ -921,6 +1424,7 @@ class PDFEditorApp {
 
         const store = emailTemplates.getTemplates();
         const defaultId = emailTemplates.getDefault().id;
+        const locked = secureStorage.hasVault() && !secureStorage.isUnlocked();
 
         list.innerHTML = store
             .map(
@@ -931,8 +1435,8 @@ class PDFEditorApp {
     <div class="tpl-meta">${escapeHtml(t.subject || '(no subject)')}</div>
   </div>
   <div class="tpl-actions">
-    <button type="button" class="tpl-btn edit-btn" data-id="${escapeHtml(t.id)}">Edit</button>${!t.builtin ? `<button type="button" class="tpl-btn delete-btn" data-id="${escapeHtml(t.id)}">Delete</button>` : ''}
-    ${t.id !== defaultId ? `<button type="button" class="tpl-btn set-default" data-id="${escapeHtml(t.id)}">Set default</button>` : ''}
+    <button type="button" class="tpl-btn edit-btn" data-id="${escapeHtml(t.id)}" ${locked ? 'disabled' : ''}>Edit</button>${!t.builtin ? `<button type="button" class="tpl-btn delete-btn" data-id="${escapeHtml(t.id)}" ${locked ? 'disabled' : ''}>Delete</button>` : ''}
+    ${t.id !== defaultId ? `<button type="button" class="tpl-btn set-default" data-id="${escapeHtml(t.id)}" ${locked ? 'disabled' : ''}>Set default</button>` : ''}
   </div>
 </li>`
             )
@@ -974,7 +1478,7 @@ class PDFEditorApp {
         this.templateEditModal.classList.remove('hidden');
     }
 
-    saveTemplateEdit() {
+    async saveTemplateEdit() {
         const idEl = document.getElementById('tpl-edit-id');
         const nameEl = document.getElementById('tpl-edit-name');
         const subjectEl = document.getElementById('tpl-edit-subject');
@@ -989,32 +1493,44 @@ class PDFEditorApp {
             return;
         }
 
-        if (id) {
-            emailTemplates.update(id, { name, subject, body });
-        } else {
-            emailTemplates.add({ name, subject, body });
+        try {
+            if (id) {
+                await emailTemplates.update(id, { name, subject, body });
+            } else {
+                await emailTemplates.add({ name, subject, body });
+            }
+            this.hideTemplateEditModal();
+            this.renderTemplatesList();
+            this.refreshSendModal();
+        } catch (e) {
+            alert('Failed to save template: ' + (e instanceof Error ? e.message : String(e)));
         }
-        this.hideTemplateEditModal();
-        this.renderTemplatesList();
-        this.refreshSendModal();
     }
 
     hideTemplateEditModal() {
         this.templateEditModal.classList.add('hidden');
     }
 
-    deleteTemplate(id) {
+    async deleteTemplate(id) {
         if (!id || !confirm('Delete this template?')) return;
-        emailTemplates.remove(id);
-        this.renderTemplatesList();
-        this.refreshSendModal();
+        try {
+            await emailTemplates.remove(id);
+            this.renderTemplatesList();
+            this.refreshSendModal();
+        } catch (e) {
+            alert('Failed to delete template: ' + (e instanceof Error ? e.message : String(e)));
+        }
     }
 
-    setDefaultTemplate(id) {
+    async setDefaultTemplate(id) {
         if (!id) return;
-        emailTemplates.setDefault(id);
-        this.renderTemplatesList();
-        this.refreshSendModal();
+        try {
+            await emailTemplates.setDefault(id);
+            this.renderTemplatesList();
+            this.refreshSendModal();
+        } catch (e) {
+            alert('Failed to set default: ' + (e instanceof Error ? e.message : String(e)));
+        }
     }
 
     setupTemplatesModal() {
@@ -1045,7 +1561,7 @@ class PDFEditorApp {
             const replace = !!replaceCb?.checked;
             try {
                 const text = await f.text();
-                const { imported, errors } = emailTemplates.importJson(text, { replace });
+                const { imported, errors } = await emailTemplates.importJson(text, { replace });
                 if (errors.length) alert(`Import completed with issues:\n${errors.join('\n')}`);
                 else alert(`Imported ${imported} template(s).`);
                 this.renderTemplatesList();

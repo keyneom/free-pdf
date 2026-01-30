@@ -86,6 +86,10 @@
                     <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg>
                     <span>Send</span>
                 </button>
+                <button id="btn-vault" class="tool-btn" title="Vault – protect templates &amp; signatures">
+                    <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M18 8h-1V6c0-2.76-2.24-5-5-5S7 3.24 7 6v2H6c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V10c0-1.1-.9-2-2-2zm-6 9c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2zm3.1-9H8.9V6c0-1.71 1.39-3.1 3.1-3.1 1.71 0 3.1 1.39 3.1 3.1v2z"/></svg>
+                    <span id="btn-vault-label">Vault</span>
+                </button>
                 <button id="btn-templates" class="tool-btn" title="Email templates">
                     <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-5 14H7v-2h7v2zm3-4H7v-2h10v2zm0-4H7V7h10v2z"/></svg>
                     <span>Templates</span>
@@ -190,6 +194,7 @@
                     <div class="signature-tabs">
                         <button class="sig-tab active" data-tab="draw">Draw</button>
                         <button class="sig-tab" data-tab="type">Type</button>
+                        <button class="sig-tab" data-tab="image">Image</button>
                     </div>
                     <div class="signature-area">
                         <div id="sig-draw-area" class="sig-tab-content active">
@@ -205,6 +210,22 @@
                             </div>
                             <div id="sig-preview" class="sig-preview"></div>
                         </div>
+                        <div id="sig-image-area" class="sig-tab-content">
+                            <label class="sig-upload-label btn btn-secondary" for="sig-image-input">Choose image</label>
+                            <input type="file" id="sig-image-input" accept="image/*" hidden>
+                            <div id="sig-image-preview-wrap" class="sig-image-preview-wrap hidden">
+                                <img id="sig-image-preview" class="sig-image-preview" alt="Signature preview">
+                                <button type="button" id="sig-image-clear" class="sig-clear">Clear</button>
+                            </div>
+                        </div>
+                    </div>
+                    <div id="sig-my-signatures" class="sig-my-signatures hidden">
+                        <div class="sig-my-signatures-header">Use a saved signature</div>
+                        <div id="sig-saved-list" class="sig-saved-list"></div>
+                    </div>
+                    <div id="sig-save-current" class="sig-save-current hidden">
+                        <input type="text" id="sig-save-name" class="sig-input" placeholder="Name for this signature">
+                        <button type="button" id="sig-save-btn" class="btn btn-secondary">Save to My Signatures</button>
                     </div>
                 </div>
                 <div class="modal-footer">
@@ -252,6 +273,9 @@
                     <button class="modal-close" id="templates-modal-close">&times;</button>
                 </div>
                 <div class="modal-body">
+                    <div id="templates-vault-locked" class="vault-locked-banner hidden">
+                        <span>Vault locked.</span> <a href="#" id="templates-unlock-link" class="send-link">Unlock</a> to manage templates.
+                    </div>
                     <div class="templates-toolbar">
                         <button id="tpl-add" class="btn btn-primary">Add template</button>
                         <button id="tpl-export" class="btn btn-secondary">Export</button>
@@ -292,6 +316,94 @@
                 <div class="modal-footer">
                     <button id="tpl-edit-cancel" class="btn btn-secondary">Cancel</button>
                     <button id="tpl-edit-save" class="btn btn-primary">Save</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Vault Modal (create / unlock) -->
+        <div id="vault-modal" class="modal hidden">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h3 id="vault-modal-title">Vault</h3>
+                    <button class="modal-close" id="vault-modal-close">&times;</button>
+                </div>
+                <div class="modal-body">
+                    <div id="vault-create-panel" class="vault-panel hidden">
+                        <p class="vault-hint">Protect templates and saved signatures with a password. Data is encrypted locally; nothing is uploaded.</p>
+                        <div class="send-field">
+                            <label for="vault-create-name">Vault name</label>
+                            <input type="text" id="vault-create-name" class="send-input" placeholder="e.g. Work, Personal" autocomplete="off">
+                        </div>
+                        <div class="send-field">
+                            <label for="vault-create-password">Password</label>
+                            <input type="password" id="vault-create-password" class="send-input" placeholder="Choose a password" autocomplete="new-password">
+                        </div>
+                        <div class="send-field">
+                            <label for="vault-create-confirm">Confirm password</label>
+                            <input type="password" id="vault-create-confirm" class="send-input" placeholder="Confirm password" autocomplete="new-password">
+                        </div>
+                        <p id="vault-create-error" class="vault-error hidden"></p>
+                        <button id="vault-create-btn" class="btn btn-primary">Create vault</button>
+                    </div>
+                    <div id="vault-unlock-panel" class="vault-panel hidden">
+                        <p class="vault-hint" id="vault-unlock-hint">Enter the vault password.</p>
+                        <div class="send-field" id="vault-unlock-select-wrap">
+                            <label for="vault-unlock-select">Vault</label>
+                            <select id="vault-unlock-select" class="send-input"></select>
+                        </div>
+                        <div class="send-field hidden" id="vault-unlock-single-wrap">
+                            <label>Vault</label>
+                            <p id="vault-unlock-single-name" class="vault-single-name"></p>
+                        </div>
+                        <div class="send-field">
+                            <label for="vault-unlock-password">Password</label>
+                            <input type="password" id="vault-unlock-password" class="send-input" placeholder="Vault password" autocomplete="current-password">
+                        </div>
+                        <p id="vault-unlock-error" class="vault-error hidden"></p>
+                        <div class="vault-unlock-actions">
+                            <button id="vault-unlock-btn" class="btn btn-primary">Unlock</button>
+                            <button id="vault-delete-btn" class="btn btn-secondary">Delete vault</button>
+                        </div>
+                        <p class="vault-unlock-footer"><a href="#" id="vault-create-another-link" class="send-link">Create another vault</a></p>
+                    </div>
+                    <div id="vault-unlocked-panel" class="vault-panel hidden">
+                        <p class="vault-unlocked-name">Vault: <strong id="vault-unlocked-name"></strong></p>
+                        <div class="vault-unlocked-actions">
+                            <button id="vault-lock-btn" class="btn btn-secondary">Lock vault</button>
+                            <button id="vault-switch-btn" class="btn btn-secondary">Switch to another vault</button>
+                            <button id="vault-rename-btn" class="btn btn-secondary">Rename vault</button>
+                            <button id="vault-export-btn" class="btn btn-secondary">Export vault</button>
+                            <button id="vault-delete-current-btn" class="btn btn-secondary">Delete this vault</button>
+                        </div>
+                        <div id="vault-rename-form" class="vault-rename-form hidden">
+                            <div class="send-field">
+                                <label for="vault-rename-password">Current password</label>
+                                <input type="password" id="vault-rename-password" class="send-input" placeholder="Password" autocomplete="current-password">
+                            </div>
+                            <div class="send-field">
+                                <label for="vault-rename-new">New name</label>
+                                <input type="text" id="vault-rename-new" class="send-input" placeholder="Vault name" autocomplete="off">
+                            </div>
+                            <p id="vault-rename-error" class="vault-error hidden"></p>
+                            <button id="vault-rename-save" class="btn btn-primary">Save name</button>
+                        </div>
+                    </div>
+                    <div id="vault-import-section" class="vault-panel vault-import-section">
+                        <p class="vault-hint">Import a vault from another device (e.g. phone or laptop). Same password works.</p>
+                        <input type="file" id="vault-import-input" accept=".json,application/json" hidden>
+                        <label for="vault-import-input" class="btn btn-secondary">Choose vault file</label>
+                        <div id="vault-import-form" class="vault-import-form hidden">
+                            <div class="send-field">
+                                <label for="vault-import-password">Password for vault file</label>
+                                <input type="password" id="vault-import-password" class="send-input" placeholder="Password" autocomplete="current-password">
+                            </div>
+                            <p id="vault-import-error" class="vault-error hidden"></p>
+                            <div class="vault-import-actions">
+                                <button id="vault-import-new-btn" class="btn btn-primary">Import as new vault</button>
+                                <button id="vault-import-replace-btn" class="btn btn-secondary hidden">Replace current vault</button>
+                            </div>
+                        </div>
+                    </div>
                 </div>
             </div>
         </div>

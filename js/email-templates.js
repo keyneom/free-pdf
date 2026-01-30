@@ -1,9 +1,11 @@
 /**
  * Email Templates - Store, CRUD, placeholders, import/export
- * Templates are saved in localStorage. Export/import JSON for sync across devices.
+ * Templates are saved in localStorage (or optional vault backend). Export/import JSON for sync.
  */
 
 const STORAGE_KEY = 'free-pdf-email-templates';
+let _backend = null; // { loadStore(), saveStore(store) } — saveStore may return Promise; null = legacy localStorage
+
 const PLACEHOLDERS = [
     '{{filename}}',
     '{{date}}',
@@ -34,7 +36,7 @@ Please retain this message and the attached file for your records.
     builtin: true
 };
 
-function loadStore() {
+function loadStoreLegacy() {
     try {
         const raw = localStorage.getItem(STORAGE_KEY);
         if (!raw) return { version: 1, defaultId: 'default', templates: [DEFAULT_TEMPLATE] };
@@ -51,8 +53,29 @@ function loadStore() {
     }
 }
 
-function saveStore(store) {
+function saveStoreLegacy(store) {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(store));
+}
+
+function loadStore() {
+    if (_backend) return _backend.loadStore();
+    return loadStoreLegacy();
+}
+
+function saveStore(store) {
+    if (_backend) return _backend.saveStore(store);
+    saveStoreLegacy(store);
+    return Promise.resolve();
+}
+
+/** @param {{ loadStore(): object; saveStore(store: object): void | Promise<void> } | null} b */
+export function setTemplatesBackend(b) {
+    _backend = b;
+}
+
+/** Default-only store for when vault exists but is locked. */
+export function getDefaultOnlyTemplatesStore() {
+    return { version: 1, defaultId: 'default', templates: [{ ...DEFAULT_TEMPLATE }] };
 }
 
 function uid() {
@@ -89,51 +112,54 @@ export const emailTemplates = {
 
     /**
      * @param {Omit<EmailTemplate, 'id'>} t
-     * @returns {EmailTemplate}
+     * @returns {Promise<EmailTemplate>}
      */
-    add(t) {
+    async add(t) {
         const store = loadStore();
         const id = uid();
         const next = { id, name: t.name || 'Untitled', subject: t.subject || '', body: t.body || '', isDefault: false };
         store.templates.push(next);
         if (store.templates.length === 1) store.defaultId = id;
-        saveStore(store);
+        await saveStore(store);
         return next;
     },
 
     /**
      * @param {string} id
      * @param {Partial<Pick<EmailTemplate, 'name'|'subject'|'body'>>} updates
+     * @returns {Promise<EmailTemplate | null>}
      */
-    update(id, updates) {
+    async update(id, updates) {
         const store = loadStore();
         const t = store.templates.find((x) => x.id === id);
         if (!t) return null;
         if (updates.name != null) t.name = updates.name;
         if (updates.subject != null) t.subject = updates.subject;
         if (updates.body != null) t.body = updates.body;
-        saveStore(store);
+        await saveStore(store);
         return t;
     },
 
     /**
      * @param {string} id
+     * @returns {Promise<boolean>}
      */
-    remove(id) {
+    async remove(id) {
         const store = loadStore();
         const t = store.templates.find((x) => x.id === id);
         if (!t || t.builtin) return false;
         store.templates = store.templates.filter((x) => x.id !== id);
         if (store.defaultId === id) store.defaultId = store.templates[0]?.id || 'default';
-        saveStore(store);
+        await saveStore(store);
         return true;
     },
 
-    setDefault(id) {
+    /** @param {string} id @returns {Promise<boolean>} */
+    async setDefault(id) {
         const store = loadStore();
         if (!store.templates.some((x) => x.id === id)) return false;
         store.defaultId = id;
-        saveStore(store);
+        await saveStore(store);
         return true;
     },
 
@@ -180,9 +206,9 @@ export const emailTemplates = {
      * Merges with existing; duplicate ids overwrite. Set replace = true to replace all (keeps built-in default).
      * @param {string} json
      * @param {{ replace?: boolean }} options
-     * @returns {{ imported: number; errors: string[] }}
+     * @returns {Promise<{ imported: number; errors: string[] }>}
      */
-    importJson(json, options = {}) {
+    async importJson(json, options = {}) {
         const errors = [];
         let imported = 0;
         try {
@@ -215,7 +241,7 @@ export const emailTemplates = {
             if (data.defaultId && store.templates.some((x) => x.id === data.defaultId)) {
                 store.defaultId = data.defaultId;
             }
-            saveStore(store);
+            await saveStore(store);
         } catch (e) {
             errors.push(e instanceof Error ? e.message : 'Invalid JSON');
         }
