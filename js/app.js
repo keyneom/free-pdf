@@ -32,6 +32,7 @@ class PDFEditorApp {
         this.currentScale = 1.0;
         this.fileName = 'document.pdf';
         this.documentHash = null;
+        this.viewPages = []; // [{ id, docId, sourcePageNum, rotation }]
         this._pendingSignatureImage = null;
         this._selectedSavedSig = null;
 
@@ -44,10 +45,12 @@ class PDFEditorApp {
     init() {
         this.cacheElements();
         this.bindEvents();
+        this.canvasManager.setOnHistoryChange(() => this.updateHistoryButtons());
         this.setupDragAndDrop();
         this.setupKeyboardShortcuts();
         this.initSignaturePad();
         this.setupVault();
+        this.setupImageInsert();
         this.setupSendModal();
         this.setupTemplatesModal();
         this.setupTemplateEditModal();
@@ -97,8 +100,20 @@ class PDFEditorApp {
         this.pdfScrollArea = document.getElementById('pdf-scroll-area');
         this.pdfPages = document.getElementById('pdf-pages');
 
+        // Pages sidebar
+        this.pagesSidebar = document.getElementById('pages-sidebar');
+        this.pagesList = document.getElementById('pages-list');
+        this.pagesAppendInput = document.getElementById('pages-append-input');
+        this.pagesDeleteBtn = document.getElementById('pages-delete-btn');
+        this.pagesExtractBtn = document.getElementById('pages-extract-btn');
+        this.pagesSplitBtn = document.getElementById('pages-split-btn');
+        this.pagesRotateBtn = document.getElementById('pages-rotate-btn');
+
         // Tool options
         this.toolOptions = document.getElementById('tool-options');
+
+        // Dynamic hidden inputs
+        this._imageInsertInput = null;
 
         // Signature modal
         this.signatureModal = document.getElementById('signature-modal');
@@ -108,6 +123,32 @@ class PDFEditorApp {
         this.templatesModal = document.getElementById('templates-modal');
         this.templateEditModal = document.getElementById('template-edit-modal');
         this.bulkFillModal = document.getElementById('bulk-fill-modal');
+    }
+
+    setupImageInsert() {
+        const input = document.createElement('input');
+        input.type = 'file';
+        input.accept = 'image/*';
+        input.hidden = true;
+        input.id = 'image-insert-input';
+        document.body.appendChild(input);
+        this._imageInsertInput = input;
+
+        input.addEventListener('change', async (e) => {
+            const file = e.target.files?.[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = () => {
+                const dataUrl = reader.result;
+                this.canvasManager.setPendingImage(dataUrl);
+                this.canvasManager.setTool('image');
+                this.toolButtons.forEach((b) => b.classList.remove('active'));
+                document.querySelector('[data-tool="image"]')?.classList.add('active');
+                this.showToolOptions('image');
+            };
+            reader.readAsDataURL(file);
+            input.value = '';
+        });
     }
 
     /**
@@ -129,11 +170,15 @@ class PDFEditorApp {
 
         // Undo/Redo
         this.btnUndo.addEventListener('click', () => {
-            this.canvasManager.undo();
+            const sigOpen = !this.signatureModal.classList.contains('hidden');
+            if (sigOpen && this.signaturePad?.mode === 'draw') this.signaturePad.undo();
+            else this.canvasManager.undo();
             this.updateHistoryButtons();
         });
         this.btnRedo.addEventListener('click', () => {
-            this.canvasManager.redo();
+            const sigOpen = !this.signatureModal.classList.contains('hidden');
+            if (sigOpen && this.signaturePad?.mode === 'draw') this.signaturePad.redo();
+            else this.canvasManager.redo();
             this.updateHistoryButtons();
         });
 
@@ -159,6 +204,29 @@ class PDFEditorApp {
 
         // Signature modal
         this.setupSignatureModal();
+
+        // Pages sidebar
+        this.setupPagesSidebar();
+    }
+
+    setupPagesSidebar() {
+        this.pagesAppendInput?.addEventListener('change', async (e) => {
+            const file = e.target.files?.[0];
+            if (!file) return;
+            try {
+                await this.appendPdfFile(file);
+            } catch (err) {
+                console.error('Append PDF failed:', err);
+                alert('Failed to append PDF: ' + (err.message || err));
+            } finally {
+                this.pagesAppendInput.value = '';
+            }
+        });
+
+        this.pagesDeleteBtn?.addEventListener('click', () => this.deleteSelectedPages());
+        this.pagesExtractBtn?.addEventListener('click', () => this.extractSelectedPages());
+        this.pagesSplitBtn?.addEventListener('click', () => this.splitPdfPrompt());
+        this.pagesRotateBtn?.addEventListener('click', () => this.rotateSelectedPages());
     }
 
     /**
@@ -196,17 +264,21 @@ class PDFEditorApp {
      */
     setupKeyboardShortcuts() {
         document.addEventListener('keydown', (e) => {
+            const sigOpen = !this.signatureModal.classList.contains('hidden');
+
             // Ctrl/Cmd + Z = Undo
             if ((e.ctrlKey || e.metaKey) && e.key === 'z' && !e.shiftKey) {
                 e.preventDefault();
-                this.canvasManager.undo();
+                if (sigOpen && this.signaturePad?.mode === 'draw') this.signaturePad.undo();
+                else this.canvasManager.undo();
                 this.updateHistoryButtons();
             }
 
             // Ctrl/Cmd + Shift + Z or Ctrl/Cmd + Y = Redo
             if ((e.ctrlKey || e.metaKey) && (e.key === 'y' || (e.key === 'z' && e.shiftKey))) {
                 e.preventDefault();
-                this.canvasManager.redo();
+                if (sigOpen && this.signaturePad?.mode === 'draw') this.signaturePad.redo();
+                else this.canvasManager.redo();
                 this.updateHistoryButtons();
             }
 
@@ -308,15 +380,33 @@ class PDFEditorApp {
             // Clear any existing canvases
             this.canvasManager.clearAll();
 
+            // Build initial view page model from the main document
+            this.viewPages = [];
+            const mainDocId = this.pdfHandler.mainDocId || 'main';
+            for (let p = 1; p <= this.pdfHandler.totalPages; p++) {
+                this.viewPages.push({
+                    id: `${mainDocId}:${p}`,
+                    docId: mainDocId,
+                    sourcePageNum: p,
+                    rotation: 0
+                });
+            }
+            this.pdfHandler.currentPage = 1;
+            this.pdfHandler.totalPages = this.viewPages.length;
+
             // Render all pages
             this.showLoading('Rendering pages...');
-            await this.pdfHandler.renderAllPages(
+            await this.pdfHandler.renderViewPages(
                 this.pdfPages,
+                this.viewPages,
                 (container, width, height, pageNum) => {
                     return this.canvasManager.createCanvas(container, width, height, pageNum);
                 },
                 this.currentScale
             );
+
+            this.renderPagesSidebar();
+            this.applyPageRotationUI();
 
             // Update UI
             this.welcomeScreen.classList.add('hidden');
@@ -325,6 +415,7 @@ class PDFEditorApp {
             this.btnSend.disabled = false;
             this.updatePageNavigation();
             this.updateZoomDisplay();
+            this.updateHistoryButtons();
 
             this.hideLoading();
         } catch (error) {
@@ -343,6 +434,12 @@ class PDFEditorApp {
         // Handle signature tool specially
         if (tool === 'signature') {
             this.showSignatureModal();
+            return;
+        }
+
+        // Image tool picks a file first
+        if (tool === 'image') {
+            this._imageInsertInput?.click();
             return;
         }
 
@@ -394,6 +491,16 @@ class PDFEditorApp {
                             <option value="Verdana">Verdana</option>
                         </select>
                     </div>
+                    <div class="tool-option">
+                        <label>Style:</label>
+                        <button type="button" class="pages-btn" id="text-bold-btn" aria-pressed="${this.canvasManager.settings.fontWeight === 'bold'}">B</button>
+                        <button type="button" class="pages-btn" id="text-italic-btn" aria-pressed="${this.canvasManager.settings.fontStyle === 'italic'}">I</button>
+                        <select id="text-align">
+                            <option value="left" ${this.canvasManager.settings.textAlign === 'left' ? 'selected' : ''}>Left</option>
+                            <option value="center" ${this.canvasManager.settings.textAlign === 'center' ? 'selected' : ''}>Center</option>
+                            <option value="right" ${this.canvasManager.settings.textAlign === 'right' ? 'selected' : ''}>Right</option>
+                        </select>
+                    </div>
                 `;
                 this.bindTextOptions();
                 break;
@@ -413,6 +520,78 @@ class PDFEditorApp {
                 this.bindDrawOptions();
                 break;
 
+            case 'highlight':
+                this.toolOptions.innerHTML = `
+                    <div class="tool-option">
+                        <label>Color:</label>
+                        <input type="color" id="highlight-color" value="${this.canvasManager.settings.highlightColor}">
+                    </div>
+                    <div class="tool-option">
+                        <label>Opacity:</label>
+                        <input type="range" id="highlight-opacity" min="0.1" max="1" step="0.05" value="${this.canvasManager.settings.highlightOpacity}">
+                        <span id="highlight-opacity-value">${Math.round(this.canvasManager.settings.highlightOpacity * 100)}%</span>
+                    </div>
+                `;
+                this.bindHighlightOptions();
+                break;
+
+            case 'rect':
+            case 'ellipse':
+            case 'arrow':
+            case 'underline':
+            case 'strike':
+                this.toolOptions.innerHTML = `
+                    <div class="tool-option">
+                        <label>Stroke:</label>
+                        <input type="color" id="shape-stroke-color" value="${this.canvasManager.settings.strokeColor}">
+                    </div>
+                    <div class="tool-option">
+                        <label>Width:</label>
+                        <input type="range" id="shape-stroke-width" min="1" max="20" value="${this.canvasManager.settings.strokeWidth}">
+                        <span id="shape-stroke-width-value">${this.canvasManager.settings.strokeWidth}px</span>
+                    </div>
+                    <div class="tool-option">
+                        <label>Fill:</label>
+                        <select id="shape-fill">
+                            <option value="transparent" ${this.canvasManager.settings.shapeFill === 'transparent' ? 'selected' : ''}>None</option>
+                            <option value="#ffffff">White</option>
+                            <option value="#000000">Black</option>
+                            <option value="#fff59d">Yellow</option>
+                            <option value="#dcfce7">Green</option>
+                            <option value="#dbeafe">Blue</option>
+                        </select>
+                    </div>
+                `;
+                this.bindShapeOptions();
+                break;
+
+            case 'stamp':
+                this.toolOptions.innerHTML = `
+                    <div class="tool-option">
+                        <label>Stamp:</label>
+                        <select id="stamp-text">
+                            ${['APPROVED','DRAFT','REJECTED','CONFIDENTIAL'].map((t) => `<option value="${t}" ${t === (this.canvasManager.settings.stampText || 'APPROVED') ? 'selected' : ''}>${t}</option>`).join('')}
+                        </select>
+                    </div>
+                    <div class="tool-option">
+                        <small>Click on the page to place.</small>
+                    </div>
+                `;
+                this.bindStampOptions();
+                break;
+
+            case 'note':
+                this.toolOptions.innerHTML = `<div class="tool-option"><small>Click to add a note (double-click to edit).</small></div>`;
+                break;
+
+            case 'image':
+                this.toolOptions.innerHTML = `<div class="tool-option"><small>Click to place the selected image.</small></div>`;
+                break;
+
+            case 'eraser':
+                this.toolOptions.innerHTML = `<div class="tool-option"><small>Click an annotation to remove it.</small></div>`;
+                break;
+
             case 'whiteout':
                 this.toolOptions.innerHTML = `
                     <div class="tool-option">
@@ -426,6 +605,45 @@ class PDFEditorApp {
         }
     }
 
+    bindHighlightOptions() {
+        const colorInput = document.getElementById('highlight-color');
+        const opInput = document.getElementById('highlight-opacity');
+        const opValue = document.getElementById('highlight-opacity-value');
+        colorInput?.addEventListener('change', (e) => {
+            this.canvasManager.updateSettings({ highlightColor: e.target.value });
+        });
+        opInput?.addEventListener('input', (e) => {
+            const v = parseFloat(e.target.value);
+            this.canvasManager.updateSettings({ highlightOpacity: v });
+            if (opValue) opValue.textContent = `${Math.round(v * 100)}%`;
+        });
+    }
+
+    bindShapeOptions() {
+        const colorInput = document.getElementById('shape-stroke-color');
+        const widthInput = document.getElementById('shape-stroke-width');
+        const widthValue = document.getElementById('shape-stroke-width-value');
+        const fillSel = document.getElementById('shape-fill');
+        colorInput?.addEventListener('change', (e) => {
+            this.canvasManager.updateSettings({ strokeColor: e.target.value });
+        });
+        widthInput?.addEventListener('input', (e) => {
+            const w = parseInt(e.target.value);
+            this.canvasManager.updateSettings({ strokeWidth: w });
+            if (widthValue) widthValue.textContent = `${w}px`;
+        });
+        fillSel?.addEventListener('change', (e) => {
+            this.canvasManager.updateSettings({ shapeFill: e.target.value });
+        });
+    }
+
+    bindStampOptions() {
+        const sel = document.getElementById('stamp-text');
+        sel?.addEventListener('change', (e) => {
+            this.canvasManager.updateSettings({ stampText: e.target.value });
+        });
+    }
+
     /**
      * Bind text tool options
      */
@@ -433,6 +651,9 @@ class PDFEditorApp {
         const colorInput = document.getElementById('text-color');
         const sizeInput = document.getElementById('text-size');
         const fontInput = document.getElementById('text-font');
+        const boldBtn = document.getElementById('text-bold-btn');
+        const italicBtn = document.getElementById('text-italic-btn');
+        const alignSel = document.getElementById('text-align');
 
         colorInput?.addEventListener('change', (e) => {
             this.canvasManager.updateSettings({ textColor: e.target.value });
@@ -444,6 +665,22 @@ class PDFEditorApp {
 
         fontInput?.addEventListener('change', (e) => {
             this.canvasManager.updateSettings({ fontFamily: e.target.value });
+        });
+
+        boldBtn?.addEventListener('click', () => {
+            const next = this.canvasManager.settings.fontWeight === 'bold' ? 'normal' : 'bold';
+            this.canvasManager.updateSettings({ fontWeight: next });
+            boldBtn.setAttribute('aria-pressed', String(next === 'bold'));
+        });
+
+        italicBtn?.addEventListener('click', () => {
+            const next = this.canvasManager.settings.fontStyle === 'italic' ? 'normal' : 'italic';
+            this.canvasManager.updateSettings({ fontStyle: next });
+            italicBtn.setAttribute('aria-pressed', String(next === 'italic'));
+        });
+
+        alignSel?.addEventListener('change', (e) => {
+            this.canvasManager.updateSettings({ textAlign: e.target.value });
         });
     }
 
@@ -470,10 +707,14 @@ class PDFEditorApp {
      * Go to a specific page
      */
     goToPage(pageNum) {
-        if (pageNum < 1 || pageNum > this.pdfHandler.totalPages) return;
+        if (pageNum < 1 || pageNum > (this.viewPages?.length || this.pdfHandler.totalPages)) return;
 
         this.pdfHandler.currentPage = pageNum;
         this.pageInput.value = pageNum;
+
+        // Set active canvas to this page so undo/redo apply to the page we're viewing
+        const vp = this.viewPages?.[pageNum - 1];
+        if (vp) this.canvasManager.setActivePage(vp.id);
 
         // Scroll to page
         const pageWrapper = document.querySelector(`.page-wrapper[data-page="${pageNum}"]`);
@@ -482,6 +723,7 @@ class PDFEditorApp {
         }
 
         this.updatePageNavigation();
+        this.updateHistoryButtons();
     }
 
     /**
@@ -489,7 +731,7 @@ class PDFEditorApp {
      */
     updatePageNavigation() {
         const current = this.pdfHandler.currentPage;
-        const total = this.pdfHandler.totalPages;
+        const total = this.viewPages?.length || this.pdfHandler.totalPages;
 
         this.pageInput.value = current;
         this.pageInput.max = total;
@@ -497,6 +739,367 @@ class PDFEditorApp {
 
         this.btnPrevPage.disabled = current <= 1;
         this.btnNextPage.disabled = current >= total;
+    }
+
+    renderPagesSidebar() {
+        if (!this.pagesList) return;
+        this.pagesList.innerHTML = '';
+
+        // Build items in view order; thumbnails come from already-rendered pdf canvases
+        const pagesInfo = this.pdfHandler.pages || [];
+        const infoById = new Map(pagesInfo.map((p) => [p.viewPageId, p]));
+
+        const makeThumb = (vp, idx) => {
+            const pageId = vp.id;
+            const pageInfo = infoById.get(pageId);
+
+            const item = document.createElement('div');
+            item.className = 'page-thumb';
+            item.draggable = true;
+            item.dataset.pageId = pageId;
+
+            item.innerHTML = `
+                <input type="checkbox" class="page-thumb-cb" aria-label="Select page ${idx + 1}">
+                <div class="page-thumb-body">
+                    <canvas class="page-thumb-canvas" width="160" height="220"></canvas>
+                    <div class="page-thumb-meta">
+                        <span>Page ${idx + 1}</span>
+                        <span>${(vp.docId === (this.pdfHandler.mainDocId || 'main')) ? 'Doc' : 'Appended'}${vp.rotation ? ` · ${vp.rotation}°` : ''}</span>
+                    </div>
+                </div>
+            `;
+
+            const cb = item.querySelector('.page-thumb-cb');
+            const thumbCanvas = item.querySelector('.page-thumb-canvas');
+            cb.addEventListener('change', () => this.onPageSelectionChanged());
+
+            const handleDrop = (ev) => {
+                ev.preventDefault();
+                ev.stopPropagation();
+                const fromId = ev.dataTransfer.getData('text/plain') || ev.dataTransfer.getData('application/x-page-id');
+                const toId = pageId;
+                if (!fromId || fromId === toId) return;
+                this.reorderPagesById(fromId, toId);
+            };
+            const handleDragOver = (ev) => {
+                ev.preventDefault();
+                ev.stopPropagation();
+                if (ev.dataTransfer.types.includes('text/plain')) ev.dataTransfer.dropEffect = 'move';
+            };
+
+            // Click body to go to page
+            item.addEventListener('click', (ev) => {
+                if (ev.target === cb) return;
+                this.goToPage(idx + 1);
+            });
+
+            // Drag/drop reorder
+            item.addEventListener('dragstart', (ev) => {
+                item.classList.add('dragging');
+                ev.dataTransfer.effectAllowed = 'move';
+                ev.dataTransfer.setData('text/plain', pageId);
+                ev.dataTransfer.setData('application/x-page-id', pageId);
+            });
+            item.addEventListener('dragend', () => item.classList.remove('dragging'));
+            item.addEventListener('dragenter', (ev) => {
+                ev.preventDefault();
+                if (ev.dataTransfer.types.includes('text/plain')) ev.dataTransfer.dropEffect = 'move';
+            });
+            item.addEventListener('dragover', handleDragOver);
+            item.addEventListener('drop', handleDrop);
+            cb.addEventListener('dragover', handleDragOver);
+            cb.addEventListener('drop', handleDrop);
+
+            // Draw thumbnail from rendered page canvas (if available)
+            if (pageInfo?.pdfCanvas && thumbCanvas) {
+                const ctx = thumbCanvas.getContext('2d');
+                const src = pageInfo.pdfCanvas;
+                const rot = vp.rotation || 0;
+                const sw = src.width;
+                const sh = src.height;
+                const tw = thumbCanvas.width;
+                const th = thumbCanvas.height;
+                const scale = Math.min(tw / sw, th / sh);
+                const w = Math.floor(sw * scale);
+                const h = Math.floor(sh * scale);
+                const cx = tw / 2;
+                const cy = th / 2;
+                const dx = (tw - w) / 2;
+                const dy = (th - h) / 2;
+                ctx.clearRect(0, 0, tw, th);
+                ctx.fillStyle = '#ffffff';
+                ctx.fillRect(0, 0, tw, th);
+                ctx.save();
+                ctx.translate(cx, cy);
+                if (rot) ctx.rotate((rot * Math.PI) / 180);
+                ctx.translate(-cx, -cy);
+                ctx.drawImage(src, dx, dy, w, h);
+                ctx.restore();
+            }
+
+            return item;
+        };
+
+        this.viewPages.forEach((vp, idx) => {
+            this.pagesList.appendChild(makeThumb(vp, idx));
+        });
+
+        if (this.pagesRotateBtn) this.pagesRotateBtn.disabled = this.viewPages.length === 0;
+        this.onPageSelectionChanged();
+    }
+
+    getSelectedPageIds() {
+        const ids = [];
+        this.pagesList?.querySelectorAll('.page-thumb').forEach((el) => {
+            const cb = el.querySelector('.page-thumb-cb');
+            if (cb?.checked) ids.push(el.dataset.pageId);
+        });
+        return ids;
+    }
+
+    onPageSelectionChanged() {
+        const selected = this.getSelectedPageIds();
+        if (this.pagesDeleteBtn) this.pagesDeleteBtn.disabled = selected.length === 0;
+        if (this.pagesExtractBtn) this.pagesExtractBtn.disabled = selected.length === 0;
+        this.pagesList?.querySelectorAll('.page-thumb').forEach((el) => {
+            const cb = el.querySelector('.page-thumb-cb');
+            el.classList.toggle('selected', !!cb?.checked);
+        });
+    }
+
+    reorderPagesById(fromId, toId) {
+        const fromIdx = this.viewPages.findIndex((p) => p.id === fromId);
+        const toIdx = this.viewPages.findIndex((p) => p.id === toId);
+        if (fromIdx < 0 || toIdx < 0 || fromIdx === toIdx) return;
+
+        const [moved] = this.viewPages.splice(fromIdx, 1);
+        this.viewPages.splice(toIdx, 0, moved);
+
+        // Reorder DOM page wrappers to match new view order (use pdfHandler refs so we move the right nodes)
+        const wrapperById = new Map();
+        for (const p of this.pdfHandler.pages || []) {
+            if (p.wrapper && p.viewPageId) wrapperById.set(p.viewPageId, p.wrapper);
+        }
+        this.viewPages.forEach((vp, i) => {
+            const w = wrapperById.get(vp.id);
+            if (!w) return;
+            w.dataset.page = String(i + 1);
+            this.pdfPages.appendChild(w);
+        });
+
+        // Sync pdfHandler.pages ordering & indices
+        const infoById = new Map((this.pdfHandler.pages || []).map((p) => [p.viewPageId, p]));
+        this.pdfHandler.pages = this.viewPages
+            .map((vp, i) => {
+                const info = infoById.get(vp.id);
+                if (!info) return null;
+                info.viewIndex = i + 1;
+                return info;
+            })
+            .filter(Boolean);
+
+        this.pdfHandler.totalPages = this.viewPages.length;
+        this.updatePageNavigation();
+        this.applyPageRotationUI();
+        this.renderPagesSidebar();
+    }
+
+    async appendPdfFile(file) {
+        if (!file || file.type !== 'application/pdf') return;
+        const bytes = await file.arrayBuffer();
+        const { docId, pageCount } = await this.pdfHandler.addDocument(bytes, file.name);
+
+        // Add view pages for appended doc
+        const newPages = [];
+        for (let p = 1; p <= pageCount; p++) {
+            newPages.push({ id: `${docId}:${p}`, docId, sourcePageNum: p, rotation: 0 });
+        }
+
+        this.showLoading('Appending pages...');
+
+        try {
+            for (const vp of newPages) {
+                this.viewPages.push(vp);
+                await this.pdfHandler.renderOneViewPage(
+                    this.pdfPages,
+                    vp,
+                    (container, width, height, pageId) => this.canvasManager.createCanvas(container, width, height, pageId),
+                    this.currentScale,
+                    this.viewPages.length
+                );
+            }
+
+            this.pdfHandler.totalPages = this.viewPages.length;
+            this.updatePageNavigation();
+            this.renderPagesSidebar();
+        } finally {
+            this.hideLoading();
+        }
+    }
+
+    deleteSelectedPages() {
+        const ids = this.getSelectedPageIds();
+        if (ids.length === 0) return;
+        if (!confirm(`Delete ${ids.length} page(s)? This cannot be undone.`)) return;
+
+        const toDelete = new Set(ids);
+        this.viewPages = this.viewPages.filter((p) => !toDelete.has(p.id));
+        this.pdfHandler.pages = (this.pdfHandler.pages || []).filter((p) => !toDelete.has(p.viewPageId));
+
+        // Remove wrappers and canvases
+        ids.forEach((id) => {
+            const w = this.pdfPages.querySelector(`.page-wrapper[data-page-id="${CSS.escape(id)}"]`);
+            if (w) w.remove();
+            this.canvasManager.removePage(id);
+        });
+
+        // Re-number wrappers
+        this.viewPages.forEach((vp, i) => {
+            const w = this.pdfPages.querySelector(`.page-wrapper[data-page-id="${CSS.escape(vp.id)}"]`);
+            if (w) w.dataset.page = String(i + 1);
+        });
+
+        // Clamp current page
+        const total = this.viewPages.length;
+        this.pdfHandler.totalPages = total;
+        this.pdfHandler.currentPage = Math.min(this.pdfHandler.currentPage, Math.max(1, total));
+
+        this.updatePageNavigation();
+        this.renderPagesSidebar();
+        this.updateHistoryButtons();
+    }
+
+    rotateSelectedPages() {
+        let ids = this.getSelectedPageIds();
+        if (ids.length === 0 && this.viewPages.length > 0) {
+            const cur = this.pdfHandler.currentPage;
+            const vp = this.viewPages[cur - 1];
+            if (vp) ids = [vp.id];
+        }
+        if (ids.length === 0) return;
+        const idSet = new Set(ids);
+        for (const vp of this.viewPages) {
+            if (!idSet.has(vp.id)) continue;
+            vp.rotation = ((vp.rotation || 0) + 90) % 360;
+        }
+        for (const p of this.pdfHandler.pages || []) {
+            const v = this.viewPages.find((vp) => vp.id === p.viewPageId);
+            if (v) p.rotation = v.rotation;
+        }
+        this.applyPageRotationUI();
+        this.renderPagesSidebar();
+    }
+
+    /**
+     * Update main-view wrappers and inner divs to reflect viewPages[].rotation (CSS transform + size).
+     */
+    applyPageRotationUI() {
+        const pages = this.pdfHandler.pages || [];
+        for (const p of pages) {
+            const vp = this.viewPages.find((v) => v.id === p.viewPageId);
+            const r = (vp?.rotation ?? p.rotation ?? 0) % 360;
+            const wrapper = p.wrapper;
+            const inner = p.inner;
+            const d = p.dimensions;
+            if (!wrapper || !inner || !d) continue;
+            const w = d.width;
+            const h = d.height;
+            if (r === 90 || r === 270) {
+                wrapper.style.width = h + 'px';
+                wrapper.style.height = w + 'px';
+            } else {
+                wrapper.style.width = w + 'px';
+                wrapper.style.height = h + 'px';
+            }
+            inner.style.transform = r ? `translate(-50%, -50%) rotate(${r}deg)` : 'translate(-50%, -50%)';
+        }
+    }
+
+    async extractSelectedPages() {
+        const ids = this.getSelectedPageIds();
+        if (ids.length === 0) return;
+        const selectedSet = new Set(ids);
+        const subset = this.viewPages.filter((p) => selectedSet.has(p.id));
+
+        const annotationsArr = this.canvasManager.getAllAnnotations();
+        const annotationsByPageId = new Map();
+        for (const p of annotationsArr) {
+            if (selectedSet.has(p.pageId)) annotationsByPageId.set(p.pageId, p.annotations);
+        }
+
+        this.showLoading('Extracting pages...');
+        try {
+            const bytes = await this.exporter.exportPDF({
+                docBytesById: this.pdfHandler.getAllOriginalBytes(),
+                viewPages: subset,
+                annotationsByPageId,
+                scale: this.currentScale
+            });
+            const baseName = (this.fileName || '').replace(/\.pdf$/i, '').trim() || 'document';
+            this.exporter.downloadPDF(bytes, `${baseName}-extracted.pdf`);
+        } finally {
+            this.hideLoading();
+        }
+    }
+
+    parsePageRanges(input, maxPage) {
+        const out = [];
+        const parts = String(input || '')
+            .split(',')
+            .map((s) => s.trim())
+            .filter(Boolean);
+        for (const part of parts) {
+            const m = part.match(/^(\d+)(?:\s*-\s*(\d+))?$/);
+            if (!m) continue;
+            const a = parseInt(m[1], 10);
+            const b = m[2] ? parseInt(m[2], 10) : a;
+            const start = Math.max(1, Math.min(a, b));
+            const end = Math.min(maxPage, Math.max(a, b));
+            if (start <= end) out.push([start, end]);
+        }
+        return out;
+    }
+
+    async splitPdfPrompt() {
+        const total = this.viewPages.length;
+        if (total === 0) return;
+        const input = prompt(
+            `Split into multiple PDFs by ranges.\n\nExamples:\n- 1-3,4-6\n- 1-2,5\n\nTotal pages: ${total}\nEnter ranges:`,
+            '1-1'
+        );
+        if (!input) return;
+        const ranges = this.parsePageRanges(input, total);
+        if (ranges.length === 0) {
+            alert('No valid ranges.');
+            return;
+        }
+
+        this.showLoading('Splitting PDF...');
+        try {
+            const allAnn = this.canvasManager.getAllAnnotations();
+            const annByIdAll = new Map(allAnn.map((p) => [p.pageId, p.annotations]));
+            const docBytesById = this.pdfHandler.getAllOriginalBytes();
+            const baseName = (this.fileName || '').replace(/\.pdf$/i, '').trim() || 'document';
+
+            let partNum = 1;
+            for (const [start, end] of ranges) {
+                const subset = this.viewPages.slice(start - 1, end);
+                const annSubset = new Map();
+                for (const vp of subset) {
+                    annSubset.set(vp.id, annByIdAll.get(vp.id) || []);
+                }
+                const bytes = await this.exporter.exportPDF({
+                    docBytesById,
+                    viewPages: subset,
+                    annotationsByPageId: annSubset,
+                    scale: this.currentScale
+                });
+                this.exporter.downloadPDF(bytes, `${baseName}-part-${partNum}-${start}-${end}.pdf`);
+                partNum += 1;
+            }
+        } finally {
+            this.hideLoading();
+        }
     }
 
     /**
@@ -512,6 +1115,7 @@ class PDFEditorApp {
             this.canvasManager.updateCanvasSize(canvas, width, height, newScale);
         });
 
+        this.applyPageRotationUI();
         this.updateZoomDisplay();
         this.hideLoading();
     }
@@ -521,7 +1125,9 @@ class PDFEditorApp {
      */
     async fitWidth() {
         const containerWidth = this.pdfScrollArea.clientWidth - 48; // Account for padding
-        const page = await this.pdfHandler.getPage(1);
+        const first = this.viewPages?.[0];
+        if (!first) return;
+        const page = await this.pdfHandler.getPage(first.docId, first.sourcePageNum);
         const viewport = page.getViewport({ scale: 1 });
         const scale = containerWidth / viewport.width;
 
@@ -572,6 +1178,7 @@ class PDFEditorApp {
         clearBtn.addEventListener('click', () => {
             this.signaturePad.clear();
             updateApplyState();
+            this.updateHistoryButtons();
         });
 
         // Consent + identity
@@ -599,6 +1206,7 @@ class PDFEditorApp {
                 if (tabName === 'draw' || tabName === 'type') this.signaturePad.setMode(tabName);
                 this._refreshSignatureModalExtras();
                 updateApplyState();
+                this.updateHistoryButtons();
             });
         });
 
@@ -619,8 +1227,12 @@ class PDFEditorApp {
 
         // Draw end (mouseup/touchend on pad) to refresh Apply state
         if (sigCanvas) {
-            sigCanvas.addEventListener('mouseup', updateApplyState);
-            sigCanvas.addEventListener('touchend', updateApplyState);
+            const onSigChanged = () => {
+                updateApplyState();
+                this.updateHistoryButtons();
+            };
+            sigCanvas.addEventListener('mouseup', onSigChanged);
+            sigCanvas.addEventListener('touchend', onSigChanged);
         }
 
         // Image tab: file input, preview, clear
@@ -835,6 +1447,7 @@ class PDFEditorApp {
 
         this._refreshSignatureModalExtras();
         this.updateSignatureApplyState();
+        this.updateHistoryButtons();
     }
 
     /**
@@ -842,6 +1455,7 @@ class PDFEditorApp {
      */
     hideSignatureModal() {
         this.signatureModal.classList.add('hidden');
+        this.updateHistoryButtons();
     }
 
     /**
@@ -851,13 +1465,19 @@ class PDFEditorApp {
     async getExportedPDF() {
         if (!this.pdfHandler.isLoaded()) return null;
 
-        const annotations = this.canvasManager.getAllAnnotations();
-        const originalBytes = this.pdfHandler.getOriginalBytes();
-        const modifiedPdfBytes = await this.exporter.exportPDF(
-            originalBytes,
-            annotations,
-            this.currentScale
-        );
+        const annotationsArr = this.canvasManager.getAllAnnotations();
+        const annotationsByPageId = new Map();
+        for (const p of annotationsArr) {
+            annotationsByPageId.set(p.pageId, p.annotations);
+        }
+
+        const docBytesById = this.pdfHandler.getAllOriginalBytes();
+        const modifiedPdfBytes = await this.exporter.exportPDF({
+            docBytesById,
+            viewPages: this.viewPages,
+            annotationsByPageId,
+            scale: this.currentScale
+        });
 
         const baseName = (this.fileName || '').replace(/\.pdf$/i, '').trim();
         const hasRealFilename = baseName && baseName !== 'document';
@@ -1816,10 +2436,14 @@ class PDFEditorApp {
      * Update undo/redo button states
      */
     updateHistoryButtons() {
-        // For now, just enable/disable based on whether there are any canvases
-        const hasCanvases = this.canvasManager.canvases.size > 0;
-        this.btnUndo.disabled = !hasCanvases;
-        this.btnRedo.disabled = !hasCanvases;
+        const sigOpen = !this.signatureModal.classList.contains('hidden');
+        if (sigOpen && this.signaturePad?.mode === 'draw') {
+            this.btnUndo.disabled = !this.signaturePad.canUndo();
+            this.btnRedo.disabled = !this.signaturePad.canRedo();
+            return;
+        }
+        this.btnUndo.disabled = !this.canvasManager.canUndo();
+        this.btnRedo.disabled = !this.canvasManager.canRedo();
     }
 
     /**

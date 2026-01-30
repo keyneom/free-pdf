@@ -12,6 +12,11 @@ export class SignaturePad {
         this.mode = 'draw'; // 'draw' or 'type'
         this.typedText = '';
         this.fontStyle = 'cursive';
+
+        // Undo/redo for draw mode
+        this.undoStack = [];
+        this.redoStack = [];
+        this.maxHistory = 50;
     }
 
     /**
@@ -30,6 +35,9 @@ export class SignaturePad {
 
         // Set up event listeners for drawing
         this.setupDrawingEvents();
+
+        // Seed initial blank state so first stroke can be undone
+        this.resetHistory();
     }
 
     /**
@@ -62,6 +70,7 @@ export class SignaturePad {
      * Start drawing
      */
     startDrawing(e) {
+        if (this.mode !== 'draw') return;
         this.isDrawing = true;
         const rect = this.canvas.getBoundingClientRect();
         this.lastX = e.clientX - rect.left;
@@ -72,6 +81,7 @@ export class SignaturePad {
      * Draw on the canvas
      */
     draw(e) {
+        if (this.mode !== 'draw') return;
         if (!this.isDrawing) return;
 
         const rect = this.canvas.getBoundingClientRect();
@@ -91,6 +101,13 @@ export class SignaturePad {
      * Stop drawing
      */
     stopDrawing() {
+        if (this.mode !== 'draw') {
+            this.isDrawing = false;
+            return;
+        }
+        if (this.isDrawing) {
+            this.commitHistorySnapshot();
+        }
         this.isDrawing = false;
     }
 
@@ -99,6 +116,7 @@ export class SignaturePad {
      */
     clear() {
         this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+        this.resetHistory();
     }
 
     /**
@@ -272,6 +290,73 @@ export class SignaturePad {
      */
     setMode(mode) {
         this.mode = mode;
+        // Typed mode is regenerated on demand; draw mode uses canvas pixels.
+        if (mode === 'draw') {
+            // Ensure history exists (init may have happened before)
+            if (this.undoStack.length === 0) this.resetHistory();
+        }
+    }
+
+    /**
+     * Capture current canvas pixels as history snapshot
+     */
+    captureSnapshot() {
+        if (!this.ctx || !this.canvas) return null;
+        return this.ctx.getImageData(0, 0, this.canvas.width, this.canvas.height);
+    }
+
+    /**
+     * Restore pixels from a snapshot
+     */
+    restoreSnapshot(snapshot) {
+        if (!snapshot || !this.ctx) return;
+        this.ctx.putImageData(snapshot, 0, 0);
+    }
+
+    /**
+     * Reset undo/redo history (seed with current state)
+     */
+    resetHistory() {
+        this.undoStack = [];
+        this.redoStack = [];
+        const snap = this.captureSnapshot();
+        if (snap) this.undoStack.push(snap);
+    }
+
+    /**
+     * Push a new snapshot to undo stack (clears redo)
+     */
+    commitHistorySnapshot() {
+        const snap = this.captureSnapshot();
+        if (!snap) return;
+        this.undoStack.push(snap);
+        this.redoStack = [];
+        if (this.undoStack.length > this.maxHistory) {
+            this.undoStack.shift();
+        }
+    }
+
+    canUndo() {
+        return this.mode === 'draw' && this.undoStack.length > 1;
+    }
+
+    canRedo() {
+        return this.mode === 'draw' && this.redoStack.length > 0;
+    }
+
+    undo() {
+        if (!this.canUndo()) return;
+        const current = this.undoStack.pop();
+        this.redoStack.push(current);
+        const prev = this.undoStack[this.undoStack.length - 1];
+        this.restoreSnapshot(prev);
+    }
+
+    redo() {
+        if (!this.canRedo()) return;
+        const next = this.redoStack.pop();
+        this.undoStack.push(next);
+        this.restoreSnapshot(next);
     }
 
     /**

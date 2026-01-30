@@ -12,29 +12,63 @@ Create a **free, privacy-focused PDF editing tool** that:
 
 ## Features
 
+### Page Operations
+- **Pages sidebar** – Thumbnails for all pages; drag-and-drop to **reorder**
+- **Append** – Add pages from another PDF (append to end)
+- **Delete** – Remove selected pages (with confirmation)
+- **Extract** – Download selected pages as a new PDF
+- **Split** – Enter page ranges (e.g. `1-3,4-6`) to split the document into multiple PDFs
+
 ### Core Editing Tools
-- **Text Boxes** - Add text annotations anywhere on the PDF
-- **Whiteout/Redaction** - Cover existing content with white rectangles
-- **Freehand Drawing** - Draw signatures and annotations directly on the document
-- **Digital Signatures** - Create and insert signatures (drawn or typed). Supports intent/consent, signer identity, timestamps, and an embedded audit trail. The document’s SHA-256 hash is computed on load and stored for association.
+- **Text** – Add text annotations; font, size, color, bold, italic, alignment
+- **Whiteout** – Cover existing content with white rectangles
+- **Freehand drawing** – Draw directly on the document (color, stroke width)
+- **Eraser** – Click an annotation to remove it
+- **Highlight** – Semi-transparent highlight rectangles (color, opacity)
+- **Underline / Strikethrough** – Draw lines under or through text
+- **Shapes** – Rectangle, ellipse, arrow (stroke/fill, color)
+- **Sticky note** – Add note callouts (double-click to edit)
+- **Stamp** – Place text stamps (e.g. APPROVED, DRAFT); editable presets
+- **Insert image** – Place PNG/JPG images on the page
+- **Digital signatures** – Create signatures (draw or type). Intent/consent, signer identity, timestamps, and an embedded audit trail. Document SHA-256 hash stored for association.
 
 ### Form Fields
-- **Text Input Fields** - Add fillable text fields
-- **Checkboxes** - Add interactive checkboxes
+- **Text field** – Fillable text inputs
+- **Checkbox** – Interactive checkboxes
+- **Radio** – Radio button groups (shared field name)
+- **Dropdown** – Select-one dropdowns (configurable options)
+- **Date** – Date-style fillable fields (YYYY-MM-DD)
+
+Form fields support **field names** for **Bulk Fill from CSV** (see below).
 
 ### Document Navigation
-- Multi-page PDF support with page navigation
-- Zoom in/out controls
-- Fit-to-width view
+- Multi-page PDF support with prev/next and page-number input
+- **Pages sidebar** with thumbnails; click to jump to a page
+- Zoom in/out and fit-to-width
+- Page navigation reflects current view order (after reorder/append/delete)
+
+### Undo / Redo
+- **Undo** (Ctrl/Cmd+Z) and **Redo** (Ctrl/Cmd+Y or Ctrl/Cmd+Shift+Z) for all edits, including freehand drawing
+- Signature-pad drawing has its own undo/redo when the signature modal is open
 
 ### Export
-- Download edited PDF with all annotations flattened into the document
-- **Send via email** – Download the PDF and open your email client with a template-filled subject and body. Attach the downloaded file and send. Uses configurable **email templates** (see below).
+- **Download** – Save edited PDF with annotations flattened into the document
+- **Send via email** – Download the PDF and open your email client with a template-filled subject and body. Manually attach the downloaded file and send. Uses **email templates** (below).
+- **Bulk Fill from CSV** – Use the current PDF (or an uploaded template) plus a CSV. Map CSV columns to form field names, then generate one filled PDF per CSV row; each downloads automatically.
 
-### Email templates
-- **Templates** are stored locally (localStorage). Use **Templates** in the toolbar to add, edit, delete, and set a default.
-- **Placeholders** in subject/body: `{{filename}}`, `{{date}}`, `{{signatureSummary}}`, `{{signerNames}}`, `{{pageCount}}`, `{{documentHash}}`, `{{attachmentNote}}`.
-- **Export** – Download templates as a JSON file. **Import** – Merge from a JSON file; optionally **Replace existing** to overwrite all templates. Use export/import to sync templates across devices (e.g. copy the file via cloud or USB).
+### Email Templates
+- Stored locally (localStorage). **Templates** in the toolbar: add, edit, delete, set default.
+- **Placeholders**: `{{filename}}`, `{{date}}`, `{{signatureSummary}}`, `{{signerNames}}`, `{{pageCount}}`, `{{documentHash}}`, `{{attachmentNote}}`.
+- **Export** templates as JSON; **Import** to merge (optional **Replace existing**). Use to sync across devices.
+
+## Future Considerations
+
+Ideas to keep in sync as the app evolves:
+
+- **Signatures** – Initials, multiple saved signatures, placement helpers (e.g. “place on all pages”), timestamp/reason metadata.
+- **Export & interoperability** – Flatten annotations vs keep editable; PDF/A-style export; compress/optimize output size.
+- **Search & navigation** – Text search (find in document), thumbnails/outline (TOC) where available.
+- **Security** – Password protection, restrict editing, remove metadata, redaction that permanently removes text.
 
 ## Technical Architecture
 
@@ -49,59 +83,63 @@ Create a **free, privacy-focused PDF editing tool** that:
 
 ### How It Works
 
-1. **PDF Loading**: PDF.js loads and renders each page to a canvas element
-2. **Annotation Layer**: Fabric.js overlays a transparent canvas on each page for interactive editing
-3. **Object Manipulation**: Users add/move/resize annotations using Fabric.js
-4. **Export**: pdf-lib reads the original PDF, embeds annotations as native PDF elements, and outputs a new PDF
+1. **PDF loading** – PDF.js loads one or more PDFs; pages are tracked in a **view-order** model (supports reorder, append, delete).
+2. **Annotation layer** – Fabric.js overlays a transparent canvas on each page for interactive editing.
+3. **Object manipulation** – Users add, move, resize, and delete annotations. Canvases and history are keyed by stable page IDs so reordering does not break annotations.
+4. **Export** – pdf-lib builds a new PDF from the view-order model (copying source pages in order, including from appended docs), draws annotations onto each output page, and saves. Bulk Fill uses the same pipeline once per CSV row.
 
 ### File Structure
 
 ```
 free-pdf/
-├── index.html          # Main HTML file
+├── index.html          # Main HTML, toolbar, modals, pages sidebar
 ├── css/
 │   └── styles.css      # Application styles
 ├── js/
-│   ├── app.js          # Main application entry point
-│   ├── pdf-handler.js  # PDF loading and rendering logic
-│   ├── canvas-manager.js # Fabric.js canvas management
-│   ├── signature-pad.js  # Signature drawing/typing
-│   ├── export.js       # PDF export functionality
-│   └── email-templates.js # Email template storage, placeholders, import/export
+│   ├── app.js          # Main application, UI, pages sidebar, modals
+│   ├── pdf-handler.js  # PDF load/render, multi-doc, view-order model
+│   ├── canvas-manager.js # Fabric overlays, tools, history, form fields
+│   ├── signature-pad.js  # Signature draw/type, undo/redo
+│   ├── export.js       # PDF export, form fields, audit trail
+│   ├── email-templates.js # Email template storage, placeholders, import/export
+│   └── bulk-fill.js    # CSV parse, form-field mapping, bulk PDF generation
 └── README.md           # This file
 ```
 
 ## Development Roadmap
 
 ### Phase 1: Core Infrastructure ✅
-- [x] Project structure setup
-- [x] HTML/CSS layout with toolbar
-- [x] PDF.js integration for rendering
-- [x] Multi-page support
+- [x] Project structure, HTML/CSS, toolbar
+- [x] PDF.js integration, multi-page support
 
 ### Phase 2: WYSIWYG Canvas ✅
-- [x] Fabric.js overlay on PDF pages
-- [x] Selection and manipulation of objects
-- [x] Undo/redo functionality
+- [x] Fabric.js overlay per page, selection/manipulation
+- [x] Undo/redo (including freehand and signature pad)
 
 ### Phase 3: Annotation Tools ✅
-- [x] Text box tool
-- [x] Whiteout/redaction tool
-- [x] Freehand drawing tool
-- [x] Signature pad (draw and type modes)
+- [x] Text, whiteout, freehand, eraser
+- [x] Highlight, underline, strikethrough; shapes (rect, ellipse, arrow)
+- [x] Sticky note, stamp, insert image
+- [x] Signature pad (draw and type)
 
 ### Phase 4: Form Fields ✅
-- [x] Text input field tool
-- [x] Checkbox tool
+- [x] Text field, checkbox
+- [x] Radio, dropdown, date
+- [x] Field names for bulk fill
 
-### Phase 5: Export ✅
-- [x] PDF export with pdf-lib
-- [x] Flatten annotations into PDF
-- [x] Preserve original PDF quality
+### Phase 5: Page Operations ✅
+- [x] View-order page model, multi-doc support
+- [x] Pages sidebar, thumbnails, drag-and-drop reorder
+- [x] Append, delete, extract, split
 
-### Phase 6: Polish ✅
-- [x] Keyboard shortcuts (V, T, W, D, S, Delete, Ctrl+Z, Ctrl+Y)
-- [x] Touch/mobile support (signature drawing)
+### Phase 6: Export & Workflows ✅
+- [x] PDF export (view-order, annotations, form fields)
+- [x] Send via email, email templates
+- [x] Bulk fill from CSV
+
+### Phase 7: Polish ✅
+- [x] Keyboard shortcuts (V, T, W, D, S, Delete, Ctrl+Z, Ctrl+Y, Escape)
+- [x] Touch/mobile (signature drawing)
 - [x] Error handling and validation
 - [ ] Performance optimization (ongoing)
 
@@ -109,30 +147,29 @@ free-pdf/
 
 ### Local Development
 
-1. Clone the repository
-2. Serve the directory with any static file server:
+1. Clone the repository.
+2. Serve the project with a static file server:
    ```bash
-   # Using Python
+   # Python
    python -m http.server 8000
 
-   # Using Node.js
+   # Node.js
    npx serve
 
-   # Using PHP
+   # PHP
    php -S localhost:8000
    ```
-3. Open `http://localhost:8000` in your browser
+3. Open `http://localhost:8000` (or the port you used) in your browser.
 
 ### GitHub Pages Deployment
 
-1. Push code to a GitHub repository
-2. Go to Settings → Pages
-3. Select source branch (usually `main`)
-4. Site will be available at `https://username.github.io/repo-name`
+1. Push the repo to GitHub.
+2. Settings → Pages → choose source branch (e.g. `main`).
+3. Site will be at `https://<username>.github.io/<repo-name>`.
 
 ## Privacy
 
-**Your files never leave your computer.** All PDF processing happens entirely in the browser using JavaScript. No data is uploaded to any server.
+**Your files never leave your computer.** All PDF and CSV processing runs in the browser. Nothing is uploaded to any server.
 
 ## Browser Support
 
@@ -143,4 +180,4 @@ free-pdf/
 
 ## License
 
-MIT License - Free for personal and commercial use.
+MIT License — free for personal and commercial use.

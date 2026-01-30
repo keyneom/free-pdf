@@ -10,58 +10,118 @@ export class PDFExporter {
     }
 
     /**
-     * Export the PDF with all annotations
-     * @param {ArrayBuffer} originalPdfBytes - Original PDF bytes
-     * @param {Array} allAnnotations - Annotations from all pages
-     * @param {number} scale - Current canvas scale
+     * Export a PDF with annotations.
+     *
+     * New mode (supports reorder/append via viewPages):
+     * @param {{ docBytesById: Map<string, ArrayBuffer>; viewPages: Array<{id: string; docId: string; sourcePageNum: number; rotation?: number}>; annotationsByPageId: Map<string, any[]>; scale: number }} input
      * @returns {Promise<Uint8Array>} - Modified PDF bytes
      */
-    async exportPDF(originalPdfBytes, allAnnotations, scale) {
-        // Load the original PDF
-        const pdfDoc = await PDFDocument.load(originalPdfBytes);
+    async exportPDF(input, allAnnotationsLegacy, scaleLegacy) {
+        // Backward compatibility (older call signature)
+        if (input instanceof ArrayBuffer) {
+            const pdfDoc = await PDFDocument.load(input);
+            pdfDoc.registerFontkit(fontkit);
+
+            // Embed standard fonts
+            this.fonts.helvetica = await pdfDoc.embedFont(StandardFonts.Helvetica);
+            this.fonts.helveticaBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
+            this.fonts.timesRoman = await pdfDoc.embedFont(StandardFonts.TimesRoman);
+            this.fonts.courier = await pdfDoc.embedFont(StandardFonts.Courier);
+
+            const pages = pdfDoc.getPages();
+            const scaleFactor = 1 / (scaleLegacy || 1);
+            const auditEntries = [];
+
+            for (const pageData of allAnnotationsLegacy || []) {
+                const pageIndex = pageData.pageNum - 1;
+                if (pageIndex >= pages.length) continue;
+                const page = pages[pageIndex];
+                const { height: pageHeight } = page.getSize();
+                for (const annotation of pageData.annotations) {
+                    await this.drawAnnotation(pdfDoc, page, annotation, scaleFactor, pageHeight, auditEntries, pageData.pageNum);
+                }
+            }
+
+            if (auditEntries.length > 0) {
+                const auditJson = JSON.stringify(auditEntries, null, 2);
+                const auditBytes = new TextEncoder().encode(auditJson);
+                await pdfDoc.attach(auditBytes, 'signatures-audit.json', {
+                    mimeType: 'application/json',
+                    description: 'Signature audit trail'
+                });
+            }
+
+            pdfDoc.setModificationDate(new Date());
+            pdfDoc.setProducer('Free PDF Editor');
+            pdfDoc.setCreator('Free PDF Editor');
+            return await pdfDoc.save();
+        }
+
+        const { docBytesById, viewPages, annotationsByPageId, scale } = input;
+
+        // Load all source PDFs with pdf-lib
+        const srcDocs = new Map();
+        for (const [docId, bytes] of docBytesById.entries()) {
+            srcDocs.set(docId, await PDFDocument.load(bytes));
+        }
+
+        // Create output PDF
+        const outDoc = await PDFDocument.create();
 
         // Register fontkit for custom fonts
-        pdfDoc.registerFontkit(fontkit);
+        outDoc.registerFontkit(fontkit);
 
         // Embed standard fonts
-        this.fonts.helvetica = await pdfDoc.embedFont(StandardFonts.Helvetica);
-        this.fonts.helveticaBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
-        this.fonts.timesRoman = await pdfDoc.embedFont(StandardFonts.TimesRoman);
-        this.fonts.courier = await pdfDoc.embedFont(StandardFonts.Courier);
+        this.fonts.helvetica = await outDoc.embedFont(StandardFonts.Helvetica);
+        this.fonts.helveticaBold = await outDoc.embedFont(StandardFonts.HelveticaBold);
+        this.fonts.timesRoman = await outDoc.embedFont(StandardFonts.TimesRoman);
+        this.fonts.courier = await outDoc.embedFont(StandardFonts.Courier);
 
-        const pages = pdfDoc.getPages();
         const scaleFactor = 1 / scale;
         const auditEntries = [];
+        // Per-export run cache for PDF form fields that may be referenced multiple times
+        this._formFieldCache = { dropdown: new Map(), radio: new Map() };
 
-        // Process each page's annotations
-        for (const pageData of allAnnotations) {
-            const pageIndex = pageData.pageNum - 1;
-            if (pageIndex >= pages.length) continue;
+        // Build output pages in view order
+        for (const vp of viewPages) {
+            const src = srcDocs.get(vp.docId);
+            if (!src) continue;
+            const [copied] = await outDoc.copyPages(src, [vp.sourcePageNum - 1]);
+            if (vp.rotation) {
+                copied.setRotation(degrees(vp.rotation));
+            }
+            outDoc.addPage(copied);
+        }
 
-            const page = pages[pageIndex];
-            const { width: pageWidth, height: pageHeight } = page.getSize();
+        // Draw annotations in view order
+        const outPages = outDoc.getPages();
+        for (let i = 0; i < viewPages.length; i++) {
+            const vp = viewPages[i];
+            const page = outPages[i];
+            if (!page) continue;
 
-            for (const annotation of pageData.annotations) {
-                await this.drawAnnotation(pdfDoc, page, annotation, scaleFactor, pageHeight, auditEntries, pageData.pageNum);
+            const { height: pageHeight } = page.getSize();
+            const pageAnnotations = annotationsByPageId.get(vp.id) || [];
+            for (const annotation of pageAnnotations) {
+                await this.drawAnnotation(outDoc, page, annotation, scaleFactor, pageHeight, auditEntries, i + 1);
             }
         }
 
         if (auditEntries.length > 0) {
             const auditJson = JSON.stringify(auditEntries, null, 2);
             const auditBytes = new TextEncoder().encode(auditJson);
-            await pdfDoc.attach(auditBytes, 'signatures-audit.json', {
+            await outDoc.attach(auditBytes, 'signatures-audit.json', {
                 mimeType: 'application/json',
                 description: 'Signature audit trail'
             });
         }
 
-        pdfDoc.setModificationDate(new Date());
-        pdfDoc.setProducer('Free PDF Editor');
-        pdfDoc.setCreator('Free PDF Editor');
+        outDoc.setModificationDate(new Date());
+        outDoc.setProducer('Free PDF Editor');
+        outDoc.setCreator('Free PDF Editor');
 
         // Save and return the modified PDF
-        const modifiedPdfBytes = await pdfDoc.save();
-        return modifiedPdfBytes;
+        return await outDoc.save();
     }
 
     /**
@@ -87,14 +147,25 @@ export class PDFExporter {
                 await this.drawText(page, obj, scaleFactor, pageHeight);
                 break;
 
+            case 'highlight':
             case 'whiteout':
             case 'rect':
                 this.drawRect(page, obj, scaleFactor, pageHeight);
                 break;
 
+            case 'ellipse':
+                // Export ellipse as an image for fidelity (stroke/fill/opacity)
+                await this.drawObjectAsImage(pdfDoc, page, obj, scaleFactor, pageHeight);
+                break;
+
+            case 'underline':
+            case 'strike':
+            case 'arrow':
+            case 'stamp':
+            case 'note':
             case 'path':
             case 'draw':
-                await this.drawPath(pdfDoc, page, obj, scaleFactor, pageHeight);
+                await this.drawObjectAsImage(pdfDoc, page, obj, scaleFactor, pageHeight);
                 break;
 
             case 'signature':
@@ -122,12 +193,30 @@ export class PDFExporter {
                 await this.createFormField(pdfDoc, page, obj, scaleFactor, pageHeight, 'checkbox');
                 break;
 
+            case 'dropdown':
+                await this.createFormField(pdfDoc, page, obj, scaleFactor, pageHeight, 'dropdown');
+                break;
+
+            case 'radio':
+                await this.createFormField(pdfDoc, page, obj, scaleFactor, pageHeight, 'radio');
+                break;
+
+            case 'date':
+                await this.createFormField(pdfDoc, page, obj, scaleFactor, pageHeight, 'text');
+                break;
+
             case 'group':
                 // Handle grouped objects
                 if (obj._annotationType === 'textfield') {
                     await this.createFormField(pdfDoc, page, obj, scaleFactor, pageHeight, 'text');
                 } else if (obj._annotationType === 'checkbox') {
                     await this.createFormField(pdfDoc, page, obj, scaleFactor, pageHeight, 'checkbox');
+                } else if (obj._annotationType === 'dropdown') {
+                    await this.createFormField(pdfDoc, page, obj, scaleFactor, pageHeight, 'dropdown');
+                } else if (obj._annotationType === 'radio') {
+                    await this.createFormField(pdfDoc, page, obj, scaleFactor, pageHeight, 'radio');
+                } else if (obj._annotationType === 'date') {
+                    await this.createFormField(pdfDoc, page, obj, scaleFactor, pageHeight, 'text');
                 }
                 break;
         }
@@ -213,7 +302,7 @@ export class PDFExporter {
     /**
      * Draw freehand path
      */
-    async drawPath(pdfDoc, page, obj, scaleFactor, pageHeight) {
+    async drawObjectAsImage(pdfDoc, page, obj, scaleFactor, pageHeight) {
         try {
             const dataUrl = obj.toDataURL?.({ format: 'png', multiplier: 2 });
             if (!dataUrl || !dataUrl.startsWith('data:image')) return;
@@ -234,7 +323,7 @@ export class PDFExporter {
                 height: height
             });
         } catch (e) {
-            console.warn('Export path as image failed:', e);
+            console.warn('Export object as image failed:', e);
         }
     }
 
@@ -376,6 +465,55 @@ export class PDFExporter {
                 });
                 if (obj._checked) {
                     checkbox.check();
+                }
+            } else if (fieldType === 'dropdown') {
+                const cache = (this._formFieldCache ||= { dropdown: new Map(), radio: new Map() });
+                let dd = cache.dropdown.get(fieldName);
+                if (!dd) {
+                    dd = pdfDoc.form.createDropdown(fieldName);
+                    const opts = (obj._options || []).map((s) => String(s));
+                    if (opts.length) dd.addOptions(opts);
+                    cache.dropdown.set(fieldName, dd);
+                }
+                dd.addToPage(page, {
+                    x: left,
+                    y: top,
+                    width: width,
+                    height: height,
+                    borderColor: rgb(0.15, 0.39, 0.92),
+                    borderWidth: 1,
+                    backgroundColor: rgb(1, 1, 1)
+                });
+                if (obj._selectedOption) {
+                    try {
+                        dd.select(String(obj._selectedOption));
+                    } catch {
+                        // ignore invalid option
+                    }
+                }
+            } else if (fieldType === 'radio') {
+                const cache = (this._formFieldCache ||= { dropdown: new Map(), radio: new Map() });
+                let rg = cache.radio.get(fieldName);
+                if (!rg) {
+                    rg = pdfDoc.form.createRadioGroup(fieldName);
+                    cache.radio.set(fieldName, rg);
+                }
+                const value = String(obj._radioValue || `${fieldName}_${Math.round(left)}_${Math.round(top)}`);
+                rg.addOptionToPage(value, page, {
+                    x: left,
+                    y: top,
+                    width: width,
+                    height: height,
+                    borderColor: rgb(0.15, 0.39, 0.92),
+                    borderWidth: 1,
+                    backgroundColor: rgb(1, 1, 1)
+                });
+                if (obj._checked) {
+                    try {
+                        rg.select(value);
+                    } catch {
+                        // ignore
+                    }
                 }
             }
         } catch (error) {
