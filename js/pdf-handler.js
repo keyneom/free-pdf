@@ -30,11 +30,14 @@ export class PDFHandler {
         this.pages = [];
 
         const docId = 'main';
-        const bytes = arrayBuffer.slice(0);
-        const loadingTask = pdfjsLib.getDocument({ data: bytes });
+        // Keep a separate copy for export: PDF.js transfers the buffer to its worker, which detaches it.
+        // We must not give PDF.js the same buffer we store for later export.
+        const bytesForExport = arrayBuffer.slice(0);
+        const bytesForPdfJs = arrayBuffer.slice(0);
+        const loadingTask = pdfjsLib.getDocument({ data: bytesForPdfJs });
         const pdfDoc = await loadingTask.promise;
 
-        this.docs.set(docId, { pdfDoc, bytes, name: 'document.pdf' });
+        this.docs.set(docId, { pdfDoc, bytes: bytesForExport, name: 'document.pdf' });
         this.mainDocId = docId;
 
         // totalPages is for the *main* document until view pages are set
@@ -51,12 +54,14 @@ export class PDFHandler {
      * @returns {Promise<{ docId: string; pageCount: number }>}
      */
     async addDocument(arrayBuffer, name = 'document.pdf') {
-        const bytes = arrayBuffer.slice(0);
-        const loadingTask = pdfjsLib.getDocument({ data: bytes });
+        // Keep a separate copy for export: PDF.js may detach the buffer it receives.
+        const bytesForExport = arrayBuffer.slice(0);
+        const bytesForPdfJs = arrayBuffer.slice(0);
+        const loadingTask = pdfjsLib.getDocument({ data: bytesForPdfJs });
         const pdfDoc = await loadingTask.promise;
 
         const docId = `doc_${Math.random().toString(36).slice(2, 10)}`;
-        this.docs.set(docId, { pdfDoc, bytes, name });
+        this.docs.set(docId, { pdfDoc, bytes: bytesForExport, name });
         return { docId, pageCount: pdfDoc.numPages };
     }
 

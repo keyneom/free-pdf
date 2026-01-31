@@ -10,6 +10,7 @@ import { emailTemplates, setTemplatesBackend, getDefaultOnlyTemplatesStore } fro
 import { secureStorage } from './secure-storage.js';
 import { BulkFillHandler } from './bulk-fill.js';
 import { parseSigningMetadata, hasOurSigningMetadata, computeDocumentHash } from './signing-metadata.js';
+import { loadFormFieldsFromPdf } from './load-form-fields.js';
 
 function escapeHtml(s) {
     if (s == null) return '';
@@ -1533,6 +1534,28 @@ class PDFEditorApp {
 
             this.renderPagesSidebar();
             this.applyPageRotationUI();
+
+            // Load form fields from PDF into canvas so they appear in the sidebar and can be filled/signed
+            try {
+                const bytes = this.pdfHandler.getOriginalBytes(mainDocId);
+                if (bytes) {
+                    const descriptors = await loadFormFieldsFromPdf(bytes);
+                    for (const desc of descriptors) {
+                        const vp = this.viewPages[desc.pageIndex];
+                        if (!vp) continue;
+                        const canvas = this.canvasManager.canvases.get(vp.id);
+                        if (!canvas) continue;
+                        this.canvasManager.addFormFieldFromPdfDescriptor(canvas, desc, this.currentScale);
+                    }
+                    if (descriptors.length > 0) {
+                        this.canvasManager.canvases.forEach((c) => c.renderAll());
+                        this.canvasManager.canvases.forEach((c, pageId) => this.canvasManager.saveState(pageId));
+                        if (this.mode === 'fill') this.refreshFieldsSidebar();
+                    }
+                }
+            } catch (e) {
+                console.warn('Could not load form fields from PDF:', e);
+            }
 
             // Detect our signing metadata (Keywords or Producer) so we can show multi-signer flow
             this.signingFlowMeta = null;

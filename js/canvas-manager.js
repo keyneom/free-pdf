@@ -438,6 +438,7 @@ export class CanvasManager {
             fontWeight: this.settings.fontWeight,
             fontStyle: this.settings.fontStyle,
             textAlign: this.settings.textAlign,
+            textBaseline: 'alphabetic',
             fill: this.settings.textColor,
             editable: true,
             selectable: true,
@@ -715,6 +716,7 @@ export class CanvasManager {
             width: w - 12 / this.currentScale,
             fontSize: 12 / this.currentScale,
             fill: '#111827',
+            textBaseline: 'alphabetic',
             left: 6 / this.currentScale,
             top: 6 / this.currentScale,
             editable: false
@@ -758,6 +760,7 @@ export class CanvasManager {
             fontSize: 20 / this.currentScale,
             fill: '#dc2626',
             fontWeight: 'bold',
+            textBaseline: 'alphabetic',
             originX: 'center',
             originY: 'center',
             left: w / 2,
@@ -1110,6 +1113,7 @@ export class CanvasManager {
             fontSize: labelFontSize,
             fontFamily: 'Arial',
             fill: '#6b7280',
+            textBaseline: 'alphabetic',
             originX: 'left',
             originY: 'top',
             left: -fieldWidth / 2 + padding,
@@ -1122,6 +1126,7 @@ export class CanvasManager {
             fontFamily: 'Arial',
             fill: '#9ca3af', // Light gray for placeholder
             fontStyle: 'italic',
+            textBaseline: 'alphabetic',
             originX: 'left',
             originY: 'top',
             left: -fieldWidth / 2 + padding,
@@ -1314,6 +1319,7 @@ export class CanvasManager {
             fontSize: labelFontSize,
             fontFamily: 'Arial',
             fill: '#6b7280',
+            textBaseline: 'alphabetic',
             originX: 'left',
             originY: 'top',
             left: -fieldWidth / 2 + padding,
@@ -1326,6 +1332,7 @@ export class CanvasManager {
             fontFamily: 'Arial',
             fill: '#9ca3af',
             fontStyle: 'italic',
+            textBaseline: 'alphabetic',
             originX: 'left',
             originY: 'top',
             left: -fieldWidth / 2 + padding,
@@ -1402,6 +1409,7 @@ export class CanvasManager {
             fontSize: labelFontSize,
             fontFamily: 'Arial',
             fill: '#6b7280',
+            textBaseline: 'alphabetic',
             originX: 'left',
             originY: 'top',
             left: -fieldWidth / 2 + padding,
@@ -1413,6 +1421,7 @@ export class CanvasManager {
             fontSize: valueFontSize,
             fontFamily: 'Arial',
             fill: '#9ca3af', // Lighter color for placeholder
+            textBaseline: 'alphabetic',
             originX: 'left',
             originY: 'top',
             left: -fieldWidth / 2 + padding,
@@ -1644,6 +1653,7 @@ export class CanvasManager {
             fontSize: fontSize,
             fill: '#666',
             textAlign: 'center',
+            textBaseline: 'alphabetic',
             originX: 'center',
             originY: 'center',
             left: width / 2,
@@ -1794,6 +1804,7 @@ export class CanvasManager {
         this._restoringPages.add(pageId);
         canvas.loadFromJSON(prevState, () => {
             canvas.forEachObject((obj) => {
+                this._fixTextBaseline(obj);
                 obj._fromHistory = true;
                 this._applyObjectInteractivity(obj, this.fillMode, this.activeTool);
             });
@@ -1819,6 +1830,7 @@ export class CanvasManager {
         this._restoringPages.add(pageId);
         canvas.loadFromJSON(nextState, () => {
             canvas.forEachObject((obj) => {
+                this._fixTextBaseline(obj);
                 obj._fromHistory = true;
                 this._applyObjectInteractivity(obj, this.fillMode, this.activeTool);
             });
@@ -1827,6 +1839,24 @@ export class CanvasManager {
             this._restoringPages.delete(pageId);
             this._onHistoryChange?.();
         });
+    }
+
+    /**
+     * Fix invalid textBaseline (e.g. 'alphabetical' → 'alphabetic') on Fabric text objects.
+     * Fabric.js/Canvas expects 'alphabetic', not 'alphabetical'.
+     */
+    _fixTextBaseline(obj) {
+        const fix = (o) => {
+            if (o && typeof o.textBaseline === 'string' && o.textBaseline !== 'alphabetic') {
+                if (o.textBaseline === 'alphabetical' || !['top', 'hanging', 'middle', 'alphabetic', 'ideographic', 'bottom'].includes(o.textBaseline)) {
+                    o.textBaseline = 'alphabetic';
+                }
+            }
+            if (o && o.getObjects) {
+                o.getObjects().forEach(fix);
+            }
+        };
+        fix(obj);
     }
 
     /**
@@ -1957,6 +1987,220 @@ export class CanvasManager {
             n++;
         }
         return `${prefix}${n}`;
+    }
+
+    /**
+     * Add a form field from a PDF descriptor (when loading a PDF that has form fields).
+     * @param {fabric.Canvas} canvas
+     * @param {Object} descriptor - { type, name, rect: { left, top, width, height }, value?, checked?, options?, signatureLabel? }
+     * @param {number} scale - Scale factor (PDF points to canvas pixels)
+     */
+    addFormFieldFromPdfDescriptor(canvas, descriptor, scale) {
+        const { type, name, rect, value = '', checked = false, options = [], signatureLabel } = descriptor;
+        const left = rect.left * scale;
+        const top = rect.top * scale;
+        const width = Math.max(20, rect.width * scale);
+        const height = Math.max(16, rect.height * scale);
+        const pad = 4 / this.currentScale;
+
+        if (type === 'signature-field') {
+            const label = signatureLabel || 'Signature';
+            const rectObj = new fabric.Rect({
+                width,
+                height,
+                fill: 'rgba(255, 255, 200, 0.3)',
+                stroke: '#999',
+                strokeWidth: 2 / this.currentScale,
+                strokeDashArray: [5 / this.currentScale, 5 / this.currentScale],
+                rx: 4 / this.currentScale,
+                ry: 4 / this.currentScale
+            });
+            const fontSize = Math.min(14, height / 4) / this.currentScale;
+            const text = new fabric.Text(`${label}\n(Double-click to sign)`, {
+                fontSize,
+                fill: '#666',
+                textAlign: 'center',
+                textBaseline: 'alphabetic',
+                originX: 'center',
+                originY: 'center',
+                left: width / 2,
+                top: height / 2
+            });
+            const group = new fabric.Group([rectObj, text], {
+                left,
+                top,
+                selectable: true,
+                _annotationType: 'signature-field',
+                _signatureFieldLabel: label
+            });
+            canvas.add(group);
+        } else if (type === 'textfield' || type === 'date') {
+            const labelFontSize = Math.min(10, height / 3) / this.currentScale;
+            const valueFontSize = Math.min(12, height / 2.5) / this.currentScale;
+            const background = new fabric.Rect({
+                width,
+                height,
+                fill: '#ffffff',
+                stroke: '#2563eb',
+                strokeWidth: 1 / this.currentScale,
+                rx: 3 / this.currentScale,
+                ry: 3 / this.currentScale,
+                originX: 'left',
+                originY: 'top',
+                left: 0,
+                top: 0
+            });
+            const label = new fabric.Text(name, {
+                fontSize: labelFontSize,
+                fontFamily: 'Arial',
+                fill: '#6b7280',
+                textBaseline: 'alphabetic',
+                originX: 'left',
+                originY: 'top',
+                left: pad,
+                top: pad
+            });
+            const displayVal = value || (type === 'date' ? 'YYYY-MM-DD' : 'Double-click to fill');
+            const valueText = new fabric.Text(displayVal, {
+                fontSize: valueFontSize,
+                fontFamily: 'Arial',
+                fill: value ? '#000000' : '#9ca3af',
+                fontStyle: value ? 'normal' : 'italic',
+                textBaseline: 'alphabetic',
+                originX: 'left',
+                originY: 'top',
+                left: pad,
+                top: pad + labelFontSize + 2 / this.currentScale
+            });
+            const group = new fabric.Group([background, label, valueText], {
+                left,
+                top,
+                selectable: true,
+                _annotationType: type,
+                _fieldValue: value,
+                _fieldName: name,
+                _fieldLocked: false,
+                _labelFontSize: labelFontSize,
+                _valueFontSize: valueFontSize,
+                _padding: pad
+            });
+            this._setupFormFieldScaling(group, canvas, pad);
+            group.on('mousedblclick', () => {
+                if (group._fieldLocked) return;
+                this._showInlineTextEditor(group, canvas);
+            });
+            canvas.add(group);
+        } else if (type === 'checkbox') {
+            const size = Math.min(width, height, 24 / this.currentScale);
+            const box = new fabric.Rect({
+                width: size,
+                height: size,
+                fill: '#ffffff',
+                stroke: '#2563eb',
+                strokeWidth: 2 / this.currentScale,
+                rx: 3 / this.currentScale,
+                ry: 3 / this.currentScale,
+                originX: 'center',
+                originY: 'center',
+                left: width / 2,
+                top: height / 2
+            });
+            const group = new fabric.Group([box], {
+                left: left + width / 2,
+                top: top + height / 2,
+                originX: 'center',
+                originY: 'center',
+                selectable: true,
+                _annotationType: 'checkbox',
+                _checked: checked,
+                _fieldName: name,
+                _fieldLocked: false
+            });
+            if (checked) {
+                const dot = new fabric.Circle({
+                    radius: 5 / this.currentScale,
+                    fill: '#2563eb',
+                    originX: 'center',
+                    originY: 'center',
+                    left: 0,
+                    top: 0
+                });
+                group.addWithUpdate(dot);
+            }
+            group.on('mousedblclick', () => {
+                if (group._fieldLocked) return;
+                this.toggleCheckbox(group, canvas);
+            });
+            canvas.add(group);
+        } else if (type === 'dropdown') {
+            const labelFontSize = Math.min(10, height / 3) / this.currentScale;
+            const valueFontSize = Math.min(12, height / 2.5) / this.currentScale;
+            const background = new fabric.Rect({
+                width,
+                height,
+                fill: '#ffffff',
+                stroke: '#2563eb',
+                strokeWidth: 1 / this.currentScale,
+                rx: 3 / this.currentScale,
+                ry: 3 / this.currentScale,
+                originX: 'left',
+                originY: 'top',
+                left: 0,
+                top: 0
+            });
+            const label = new fabric.Text(name, {
+                fontSize: labelFontSize,
+                fontFamily: 'Arial',
+                fill: '#6b7280',
+                textBaseline: 'alphabetic',
+                originX: 'left',
+                originY: 'top',
+                left: pad,
+                top: pad
+            });
+            const displayVal = value || 'Double-click to select';
+            const valueText = new fabric.Text(displayVal, {
+                fontSize: valueFontSize,
+                fontFamily: 'Arial',
+                fill: value ? '#000000' : '#9ca3af',
+                fontStyle: value ? 'normal' : 'italic',
+                textBaseline: 'alphabetic',
+                originX: 'left',
+                originY: 'top',
+                left: pad,
+                top: pad + labelFontSize + 2 / this.currentScale
+            });
+            const chevron = new fabric.Triangle({
+                width: 8 / this.currentScale,
+                height: 6 / this.currentScale,
+                fill: '#6b7280',
+                originX: 'center',
+                originY: 'center',
+                left: width - 12 / this.currentScale,
+                top: height / 2,
+                angle: 180
+            });
+            const group = new fabric.Group([background, label, valueText, chevron], {
+                left,
+                top,
+                selectable: true,
+                _annotationType: 'dropdown',
+                _fieldName: name,
+                _fieldLocked: false,
+                _options: options.length ? options : ['Option 1', 'Option 2'],
+                _selectedOption: value,
+                _labelFontSize: labelFontSize,
+                _valueFontSize: valueFontSize,
+                _padding: pad
+            });
+            this._setupFormFieldScaling(group, canvas, pad);
+            group.on('mousedblclick', () => {
+                if (group._fieldLocked) return;
+                if (this.fillMode) this._showInlineDropdownEditor(group, canvas);
+            });
+            canvas.add(group);
+        }
+        canvas.renderAll();
     }
 
     /**

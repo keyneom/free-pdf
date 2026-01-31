@@ -5,6 +5,20 @@
 const { PDFDocument, rgb, StandardFonts, degrees } = PDFLib;
 import { parseSigningMetadata, buildSigningKeywords } from './signing-metadata.js';
 
+/**
+ * pdf-lib setKeywords() requires an array of strings. buildSigningKeywords returns a string.
+ * Ensure we always pass a proper array.
+ */
+function toKeywordsArray(payload) {
+    if (!payload) return null;
+    if (Array.isArray(payload)) {
+        const arr = payload.filter((x) => typeof x === 'string' && x.length > 0).map(String);
+        return arr.length > 0 ? arr : null;
+    }
+    const s = String(payload).trim();
+    return s ? [s] : null;
+}
+
 export class PDFExporter {
     constructor() {
         this.fonts = {};
@@ -52,7 +66,8 @@ export class PDFExporter {
                 });
                 const signers = auditEntries.map((e) => ({ name: e.signerName || '', timestamp: e.timestamp || '' }));
                 const keywordsPayload = buildSigningKeywords({ signers });
-                if (keywordsPayload) pdfDoc.setKeywords(keywordsPayload);
+                const kwArray = toKeywordsArray(keywordsPayload);
+                if (kwArray) pdfDoc.setKeywords(kwArray);
             }
 
             pdfDoc.setModificationDate(new Date());
@@ -142,9 +157,8 @@ export class PDFExporter {
         const hashChain = signingFlowMeta?.hashChain ?? previousMeta?.hashChain;
         const signers = auditEntries.map((e) => ({ name: e.signerName || '', timestamp: e.timestamp || '' }));
         const keywordsPayload = buildSigningKeywords({ signers, expectedSigners, emailTemplate, originalSenderEmail, completionToEmails, completionCcEmails, completionBccEmails, lockedSignatureFields, lockedFormFields, documentStage, hashChain });
-        if (keywordsPayload) {
-            outDoc.setKeywords(keywordsPayload);
-        }
+        const kwArray = toKeywordsArray(keywordsPayload);
+        if (kwArray) outDoc.setKeywords(kwArray);
 
         outDoc.setModificationDate(new Date());
         outDoc.setProducer('Free PDF Editor');
@@ -454,7 +468,8 @@ export class PDFExporter {
     }
 
     /**
-     * Draw signature field (empty placeholder box with label)
+     * Draw signature field (empty placeholder box with label).
+     * Also creates a read-only text form field so it appears in the sidebar when the PDF is reopened.
      */
     async drawSignatureField(pdfDoc, page, obj, scaleFactor, pageHeight) {
         const { rgb } = PDFLib;
@@ -463,7 +478,7 @@ export class PDFExporter {
         const width = bounds.width * scaleFactor;
         const height = bounds.height * scaleFactor;
         const top = pageHeight - bounds.top * scaleFactor - height;
-        const label = obj._signatureFieldLabel || 'Signature';
+        const label = (obj._signatureFieldLabel || 'Signature').trim();
 
         // Draw dashed rectangle border
         page.drawRectangle({
@@ -478,14 +493,46 @@ export class PDFExporter {
             opacity: 0.3
         });
 
-        // Draw label text
+        // Draw label text (two lines, centered) - use font and proper line spacing
         const fontSize = Math.min(12, height / 4);
-        page.drawText(`${label}\n(Sign here)`, {
-            x: left + width / 2 - (label.length * fontSize * 0.3),
-            y: top + height / 2 - fontSize,
-            size: fontSize,
-            color: rgb(0.4, 0.4, 0.4)
-        });
+        const font = this.fonts.helvetica;
+        const lineHeight = fontSize * 1.2;
+        const lines = [label || 'Signature', '(Sign here)'];
+        const totalTextHeight = lines.length * lineHeight - (lineHeight - fontSize);
+        let y = top + (height - totalTextHeight) / 2 + fontSize;
+
+        for (const line of lines) {
+            const lineWidth = line.length * fontSize * 0.55; // Approximate width for Helvetica
+            const x = left + (width - lineWidth) / 2;
+            page.drawText(line, {
+                x,
+                y,
+                size: fontSize,
+                font,
+                color: rgb(0.4, 0.4, 0.4)
+            });
+            y -= lineHeight;
+        }
+
+        // Create a read-only text form field so it appears in form field lists when PDF is reopened.
+        // pdf-lib has no createSignature(); using a text field with sig_ prefix for our metadata.
+        const baseName = (label || 'Signature').replace(/[^a-zA-Z0-9_-]/g, '_') || 'Signature';
+        const fieldName = `sig_${baseName}_${Math.round(left)}_${Math.round(top)}`;
+        try {
+            const textField = pdfDoc.form.createTextField(fieldName);
+            textField.enableReadOnly();
+            textField.addToPage(page, {
+                x: left,
+                y: top,
+                width: width,
+                height: height,
+                borderWidth: 0,
+                backgroundColor: rgb(1, 1, 1),
+                borderColor: rgb(1, 1, 1)
+            });
+        } catch (e) {
+            console.warn('Could not create signature form field, using visual only:', e);
+        }
     }
 
     /**

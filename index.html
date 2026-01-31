@@ -450,6 +450,53 @@
                         <input type="text" id="send-bcc" class="send-input" placeholder="bcc@example.com">
                     </div>
                     <p class="send-hint"><strong>Important:</strong> The PDF will be downloaded automatically. Your email app will open with this subject and body. <strong>You MUST manually attach the downloaded PDF file to the email before sending.</strong> Make sure to attach the file that was just downloaded—do not attach a different version.</p>
+                    <details class="send-protocol-help">
+                        <summary>Wrong email client opening? Configure your browser</summary>
+                        <div class="send-protocol-help-content">
+                            <p>If the wrong app opens (or <strong>nothing happens at all</strong>), check both system and browser settings:</p>
+                            <div class="send-protocol-browser">
+                                <strong>macOS system settings (required if nothing opens)</strong>
+                                <ol>
+                                    <li><strong>Default email reader:</strong> Open the Mail app → Mail → Settings → General → set <strong>Default email reader</strong> to your preferred app (Mail, Outlook, etc.)</li>
+                                    <li><strong>For Gmail in Chrome:</strong> Also set Chrome as default browser: System Settings → Desktop &amp; Dock → <strong>Default web browser</strong> → Chrome. macOS routes mailto through the default browser.</li>
+                                </ol>
+                            </div>
+                            <div class="send-protocol-browser">
+                                <strong>Chrome</strong>
+                                <ol>
+                                    <li>Settings → Privacy and security → Site settings → Additional permissions → <strong>Handlers</strong></li>
+                                    <li>Turn on <strong>Allow sites to ask to become default handlers for protocols</strong></li>
+                                    <li>Open your webmail: <a href="https://mail.google.com" target="_blank" rel="noopener">Gmail</a>, <a href="https://outlook.com" target="_blank" rel="noopener">Outlook.com</a>, <a href="https://mail.yahoo.com" target="_blank" rel="noopener">Yahoo Mail</a>, etc.</li>
+                                    <li>Click the <strong>protocol handler icon</strong> (⊞ in the address bar) and choose <strong>Allow</strong> / Use Gmail</li>
+                                    <li><strong>Important:</strong> Go to <code>chrome://settings/handlers</code> and set Gmail (or your webmail) as the <strong>default</strong> handler for <strong>mailto</strong>. If no default is set, Chrome may do nothing when mailto links are clicked.</li>
+                                </ol>
+                            </div>
+                            <div class="send-protocol-browser">
+                                <strong>Edge</strong>
+                                <ol>
+                                    <li>Go to <code>edge://settings/content/handlers</code></li>
+                                    <li>Enable <strong>Allow sites to ask to become default handlers for protocols</strong></li>
+                                    <li>Open your webmail (Gmail, Outlook.com, Yahoo Mail, etc.), then click the handler icon in the address bar and allow it</li>
+                                    <li><strong>Important:</strong> Set your webmail as the <strong>default</strong> handler for <strong>mailto</strong> in the handlers list — otherwise mailto links may do nothing.</li>
+                                </ol>
+                            </div>
+                            <div class="send-protocol-browser">
+                                <strong>Firefox</strong>
+                                <ol>
+                                    <li>Settings → General → scroll to <strong>Applications</strong></li>
+                                    <li>Find <strong>mailto</strong> and set it to your preferred handler (e.g. Gmail, Outlook.com)</li>
+                                </ol>
+                            </div>
+                            <div class="send-protocol-browser">
+                                <strong>Safari (Mac)</strong>
+                                <ol>
+                                    <li>Safari has no built-in mailto handler picker. Use the <a href="https://github.com/jackyef/google-mailto-handler-safari" target="_blank" rel="noopener">Gmail Mailto Handler</a> extension, or open this page in Chrome/Firefox and set Gmail there</li>
+                                    <li>Windows: Settings → Apps → Default apps → Email to choose your default email app</li>
+                                </ol>
+                            </div>
+                            <p class="send-protocol-tip">After changing handlers, refresh this page and try sending again.</p>
+                        </div>
+                    </details>
                     <p class="send-footer-note"><a href="#" id="send-manage-templates" class="send-link">Manage email templates</a></p>
                 </div>
                 <div class="modal-footer">
@@ -736,6 +783,14 @@
                         <div id="bulk-fill-rows" class="bulk-fill-rows hidden">
                             <h4>Rows</h4>
                             <p class="bulk-fill-hint">Download a filled PDF or send an email for each row.</p>
+                            <details class="send-protocol-help send-protocol-help--compact">
+                                <summary>Wrong email client opening? Configure your browser</summary>
+                                <div class="send-protocol-help-content">
+                                    <p><strong>macOS (if nothing opens):</strong> Mail app → Settings → General → Default email reader. For Gmail in Chrome: set Chrome as default browser in System Settings → Desktop &amp; Dock.</p>
+                                    <p><strong>Chrome/Edge:</strong> Settings → Site settings → Handlers — enable &quot;Allow sites to ask to become default handlers.&quot; Then open Gmail (or your webmail), click the ⊞ icon in the address bar, and allow it. <strong>Set Gmail (or your webmail) as the default handler for mailto</strong> at <code>chrome://settings/handlers</code> — otherwise mailto links may do nothing.</p>
+                                    <p><strong>Firefox:</strong> Settings → General → Applications → find <strong>mailto</strong> → choose your email handler.</p>
+                                </div>
+                            </details>
                             <div class="bulk-fill-rows-toolbar">
                                 <button type="button" id="bulk-fill-send-all" class="btn btn-primary" disabled>Send all emails</button>
                                 <span id="bulk-fill-send-all-status" class="bulk-fill-send-all-status hidden"></span>
