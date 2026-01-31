@@ -850,6 +850,27 @@ class PDFEditorApp {
                 });
                 
                 inputContainer.appendChild(signBtn);
+
+                const emailRow = document.createElement('div');
+                emailRow.className = 'field-sidebar-signer-email-row';
+                const emailLabel = document.createElement('label');
+                emailLabel.className = 'field-sidebar-signer-email-label';
+                emailLabel.textContent = 'Email (to send to this signer)';
+                const emailInput = document.createElement('input');
+                emailInput.type = 'email';
+                emailInput.className = 'field-sidebar-signer-email-input send-input';
+                emailInput.placeholder = 'signer@example.com';
+                const signerInfo = this.detectCurrentSignerForField(field);
+                emailInput.value = signerInfo.email || '';
+                emailInput.addEventListener('change', () => {
+                    this.updateSignerEmailForField(field, emailInput.value.trim());
+                });
+                emailInput.addEventListener('blur', () => {
+                    this.updateSignerEmailForField(field, emailInput.value.trim());
+                });
+                emailRow.appendChild(emailLabel);
+                emailRow.appendChild(emailInput);
+                inputContainer.appendChild(emailRow);
             } else if (field.type === 'signature-filled') {
                 const signedInfo = document.createElement('div');
                 signedInfo.className = 'field-sidebar-signed-info';
@@ -2972,6 +2993,24 @@ class PDFEditorApp {
     }
 
     /**
+     * Update the email associated with a signature field. Called when user edits the sidebar email input.
+     */
+    updateSignerEmailForField(field, email) {
+        const label = (field.signatureFieldLabel || field.object?._signatureFieldLabel || '').trim();
+        if (!label) return;
+        if (!this.signingFlowMeta) this.signingFlowMeta = { signers: [], expectedSigners: [] };
+        let expected = this.signingFlowMeta.expectedSigners || [];
+        const existing = expected.find((s) => (s.name || '').trim().toLowerCase() === label.toLowerCase());
+        if (existing) {
+            existing.email = email;
+        } else {
+            expected = [...expected, { name: label, email, order: expected.length + 1 }];
+            this.signingFlowMeta.expectedSigners = expected;
+        }
+        this.refreshSendModal();
+    }
+
+    /**
      * Get signer email for a specific field (from URL params or signing flow metadata)
      */
     detectCurrentSignerForField(field) {
@@ -3208,8 +3247,9 @@ class PDFEditorApp {
             this.exporter.downloadPDF(result.bytes, result.exportName);
             const ctx = this.buildEmailContext(result.exportName);
             const filled = emailTemplates.fill({ subject, body }, ctx);
-            // When document has completion flow, pre-fill To with original sender or all signers
-            const toEmails = this.getCompletionToEmails();
+            const toEl = document.getElementById('send-to');
+            const toVal = (toEl?.value || '').trim();
+            const toEmails = toVal ? toVal.split(/[\s,]+/).map((e) => e.trim()).filter(Boolean) : [];
             const toPart = toEmails.length > 0 ? encodeURIComponent(toEmails.join(',')) + '?' : '?';
             const ccEl = document.getElementById('send-cc');
             const bccEl = document.getElementById('send-bcc');
@@ -3226,6 +3266,33 @@ class PDFEditorApp {
         } finally {
             this.hideLoading();
         }
+    }
+
+    /**
+     * Emails to use for mailto To when opening Send modal.
+     * - Completion flow (all signed): use completionToEmails or originalSenderEmail
+     * - Initial send (expected signers, first to sign): use first signer's email
+     * @returns {string[]}
+     */
+    getSendToEmails() {
+        const meta = this.signingFlowMeta;
+        if (!meta) return [];
+        const completionTo = this.getCompletionToEmails();
+        const allSigned = this._allExpectedSignersHaveSigned?.() ?? false;
+        if (allSigned && completionTo.length > 0) return completionTo;
+        if (typeof meta.originalSenderEmail === 'string' && meta.originalSenderEmail.trim()) return [meta.originalSenderEmail.trim()];
+        if (completionTo.length > 0) return completionTo;
+        const expected = meta.expectedSigners || [];
+        const firstWithEmail = expected.find((s) => (s.email || '').trim());
+        return firstWithEmail ? [firstWithEmail.email.trim()] : [];
+    }
+
+    _allExpectedSignersHaveSigned() {
+        const meta = this.signingFlowMeta;
+        if (!meta?.expectedSigners?.length) return false;
+        const locked = new Set((meta.lockedSignatureFields || []).map((s) => String(s).toLowerCase()));
+        const expectedLabels = meta.expectedSigners.map((s) => (s.name || '').trim().toLowerCase()).filter(Boolean);
+        return expectedLabels.every((l) => locked.has(l));
     }
 
     /**
@@ -3289,15 +3356,16 @@ class PDFEditorApp {
             bodyEl.value = filled.body;
         }
 
-        // Show "Send to" hint and pre-fill CC/BCC when completion emails are set
-        const toEmails = this.getCompletionToEmails();
-        if (sendToHint) {
-            if (toEmails.length > 0) {
-                sendToHint.textContent = `This email will be addressed to: ${toEmails.join(', ')}`;
+        // Pre-fill To from signing flow (first signer for initial send, completion emails when done)
+        const suggestedTo = this.getSendToEmails();
+        const sendToEl = document.getElementById('send-to');
+        if (sendToEl) {
+            sendToEl.value = suggestedTo.join(', ');
+            if (sendToHint) {
+                sendToHint.textContent = suggestedTo.length > 0
+                    ? 'Pre-filled from signing flow. You can edit.'
+                    : 'Enter recipient email(s). Leave empty to add in your email client.';
                 sendToHint.classList.remove('hidden');
-            } else {
-                sendToHint.classList.add('hidden');
-                sendToHint.textContent = '';
             }
         }
         const sendCc = document.getElementById('send-cc');

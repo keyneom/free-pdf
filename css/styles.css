@@ -781,6 +781,23 @@ body {
     background: var(--primary-hover);
 }
 
+.field-sidebar-signer-email-row {
+    margin-top: 8px;
+}
+.field-sidebar-signer-email-label {
+    display: block;
+    font-size: 0.8rem;
+    color: var(--text-secondary);
+    margin-bottom: 4px;
+}
+.field-sidebar-signer-email-input {
+    width: 100%;
+    padding: 6px 10px;
+    font-size: 0.875rem;
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-sm);
+}
+
 .field-sidebar-signed-info {
     padding: 6px 0;
     color: var(--text-secondary);

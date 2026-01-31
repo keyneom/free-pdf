@@ -440,7 +440,11 @@
                         <label for="send-body">Body</label>
                         <textarea id="send-body" class="send-textarea" rows="10" placeholder="Email body"></textarea>
                     </div>
-                    <p id="send-to-hint" class="send-to-hint hidden"></p>
+                    <div class="send-field">
+                        <label for="send-to">To</label>
+                        <input type="text" id="send-to" class="send-input" placeholder="recipient@example.com or comma-separated">
+                        <p id="send-to-hint" class="send-to-hint"></p>
+                    </div>
                     <div class="send-field">
                         <label for="send-cc">CC (optional)</label>
                         <input type="text" id="send-cc" class="send-input" placeholder="cc@example.com, another@example.com">
