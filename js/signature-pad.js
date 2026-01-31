@@ -26,18 +26,42 @@ export class SignaturePad {
     init(canvas) {
         this.canvas = canvas;
         this.ctx = canvas.getContext('2d');
+        this._applyDrawingStyles();
+        this.setupDrawingEvents();
+        this.resetHistory();
+    }
 
-        // Set up drawing styles
+    /**
+     * Re-apply drawing styles after canvas resize (resize clears context state)
+     */
+    _applyDrawingStyles() {
+        if (!this.ctx) return;
         this.ctx.strokeStyle = '#000000';
         this.ctx.lineWidth = 2;
         this.ctx.lineCap = 'round';
         this.ctx.lineJoin = 'round';
+    }
 
-        // Set up event listeners for drawing
-        this.setupDrawingEvents();
+    /**
+     * Resize canvas so internal dimensions match displayed size.
+     * Call when modal opens so 1:1 mapping = no coordinate scaling needed.
+     * Based on Phrogz/cmojones approach for signature pads in modals.
+     */
+    resize() {
+        if (!this.canvas) return;
+        const rect = this.canvas.getBoundingClientRect();
+        const bl = this.canvas.clientLeft || 0;
+        const bt = this.canvas.clientTop || 0;
+        const w = Math.round(rect.width - 2 * bl);
+        const h = Math.round(rect.height - 2 * bt);
+        if (w <= 0 || h <= 0) return;
 
-        // Seed initial blank state so first stroke can be undone
-        this.resetHistory();
+        if (this.canvas.width !== w || this.canvas.height !== h) {
+            this.canvas.width = w;
+            this.canvas.height = h;
+            this._applyDrawingStyles();
+            this.resetHistory();
+        }
     }
 
     /**
@@ -67,14 +91,33 @@ export class SignaturePad {
     }
 
     /**
+     * Get mouse/touch coordinates in canvas space.
+     * After resize(), canvas internal size matches display, so simple offset works.
+     * Account for canvas border (clientLeft/Top) for accuracy.
+     */
+    _getCanvasCoords(e) {
+        const rect = this.canvas.getBoundingClientRect();
+        const clientX = e.clientX !== undefined ? e.clientX : e.pageX;
+        const clientY = e.clientY !== undefined ? e.clientY : e.pageY;
+        const scaleX = rect.width > 0 ? this.canvas.width / rect.width : 1;
+        const scaleY = rect.height > 0 ? this.canvas.height / rect.height : 1;
+        const left = rect.left + (this.canvas.clientLeft || 0);
+        const top = rect.top + (this.canvas.clientTop || 0);
+        return {
+            x: (clientX - left) * scaleX,
+            y: (clientY - top) * scaleY
+        };
+    }
+
+    /**
      * Start drawing
      */
     startDrawing(e) {
         if (this.mode !== 'draw') return;
         this.isDrawing = true;
-        const rect = this.canvas.getBoundingClientRect();
-        this.lastX = e.clientX - rect.left;
-        this.lastY = e.clientY - rect.top;
+        const { x, y } = this._getCanvasCoords(e);
+        this.lastX = x;
+        this.lastY = y;
     }
 
     /**
@@ -84,9 +127,7 @@ export class SignaturePad {
         if (this.mode !== 'draw') return;
         if (!this.isDrawing) return;
 
-        const rect = this.canvas.getBoundingClientRect();
-        const x = e.clientX - rect.left;
-        const y = e.clientY - rect.top;
+        const { x, y } = this._getCanvasCoords(e);
 
         this.ctx.beginPath();
         this.ctx.moveTo(this.lastX, this.lastY);

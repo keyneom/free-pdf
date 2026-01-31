@@ -23,6 +23,16 @@
         <header class="toolbar">
             <div class="toolbar-section">
                 <h1 class="logo">PDF Editor</h1>
+                <div class="mode-toggle">
+                    <button id="mode-edit" class="mode-btn active" data-mode="edit" title="Edit Mode - full editing capabilities">
+                        <svg viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg>
+                        <span>Edit</span>
+                    </button>
+                    <button id="mode-fill" class="mode-btn" data-mode="fill" title="Fill Mode - sign and complete forms">
+                        <svg viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25z"/><path fill="currentColor" d="M2 22h20v1H2z"/></svg>
+                        <span>Fill</span>
+                    </button>
+                </div>
             </div>
             <div class="toolbar-section tools">
                 <button id="btn-open" class="tool-btn primary" title="Open PDF">
@@ -52,8 +62,38 @@
                     <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M16.24 3c-.27 0-.52.11-.71.29L3 15.82V21h5.18L20.71 8.47c.39-.39.39-1.02 0-1.41l-3.76-3.76A.996.996 0 0 0 16.24 3zM7.35 19H5v-2.35l9.9-9.9 2.35 2.35-9.9 9.9zM19 19v2H11v-2h8z"/></svg>
                 </button>
 
-                <button id="btn-signature" class="tool-btn" title="Signature (S)" data-tool="signature">
-                    <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M7 22v-2h14v2H7zm0-4v-2h14v2H7zm-5-4c.7 0 1.4-.2 2-.6l1.5 1.5c-1 .7-2.2 1.1-3.5 1.1v-2zm1.5-1.5L2 11c.4-.6.6-1.3.6-2H4.6c0 1.3-.4 2.5-1.1 3.5zM2 7c0-.7.2-1.4.6-2l1.5 1.5C3.4 6.8 3 7.4 3 8H1.1c-.1-.3-.1-.7-.1-1zm5-5h2v2c-.7 0-1.4.2-2 .6L5.5 3.1c.6-.4 1.3-.7 2-.8V2h.5zM4.1 3.1L5.6 4.6C5.2 5.2 5 5.8 5 6.5H3c0-1.3.4-2.5 1.1-3.4zm5.4 6.4c-.6.4-1.2.6-1.9.6L7.6 8.6c.3-.2.6-.4.8-.7l1.1 1.6z"/></svg>
+                <div class="divider"></div>
+
+                <!-- Form Fields Group -->
+                <button id="btn-textfield" class="tool-btn" title="Form Text Field" data-tool="textfield">
+                    <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M4 7v2h16V7H4zm0 6h16v-2H4v2zm0 4h16v-2H4v2z"/></svg>
+                </button>
+
+                <button id="btn-checkbox" class="tool-btn" title="Form Checkbox" data-tool="checkbox">
+                    <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 16H5V5h14v14zM17.99 9l-1.41-1.42-6.59 6.59-2.58-2.57-1.42 1.41 4 3.99z"/></svg>
+                </button>
+
+                <button id="btn-radio" class="tool-btn" title="Form Radio" data-tool="radio">
+                    <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M12 20a8 8 0 1 1 0-16 8 8 0 0 1 0 16zm0-14a6 6 0 1 0 0 12 6 6 0 0 0 0-12zm0 9a3 3 0 1 1 0-6 3 3 0 0 1 0 6z"/></svg>
+                </button>
+
+                <button id="btn-dropdown" class="tool-btn" title="Form Dropdown" data-tool="dropdown">
+                    <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M5 7h14v4H5V7zm0 6h14v4H5v-4zm10 1l-3 3-3-3h6z"/></svg>
+                </button>
+
+                <button id="btn-date" class="tool-btn" title="Form Date Field" data-tool="date">
+                    <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M7 11h2v2H7v-2zm4 0h2v2h-2v-2zm4 0h2v2h-2v-2zM19 4h-1V2h-2v2H8V2H6v2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 16H5V9h14v11z"/></svg>
+                </button>
+
+                <button id="btn-signature-field" class="tool-btn" title="Signature Field" data-tool="signature-field">
+                    <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 16H5V5h14v14z"/><path fill="currentColor" d="M7 11h10v2H7z"/><path fill="currentColor" d="M7 15h6v1H7z"/></svg>
+                </button>
+
+                <div class="divider"></div>
+
+                <!-- Signing Tool (for Fill mode) -->
+                <button id="btn-sign" class="tool-btn" title="Sign Document" data-tool="sign">
+                    <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/><path fill="currentColor" d="M2 22h20v1H2z"/></svg>
                 </button>
 
                 <div class="divider"></div>
@@ -84,24 +124,6 @@
                 </button>
                 <button id="btn-image" class="tool-btn" title="Insert Image" data-tool="image">
                     <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M21 19V5c0-1.1-.9-2-2-2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2zM8.5 13.5l2.5 3 3.5-4.5L19 18H5l3.5-4.5z"/></svg>
-                </button>
-
-                <button id="btn-textfield" class="tool-btn" title="Form Text Field" data-tool="textfield">
-                    <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M4 7v2h16V7H4zm0 6h16v-2H4v2zm0 4h16v-2H4v2z"/></svg>
-                </button>
-
-                <button id="btn-checkbox" class="tool-btn" title="Form Checkbox" data-tool="checkbox">
-                    <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 16H5V5h14v14zM17.99 9l-1.41-1.42-6.59 6.59-2.58-2.57-1.42 1.41 4 3.99z"/></svg>
-                </button>
-
-                <button id="btn-radio" class="tool-btn" title="Form Radio" data-tool="radio">
-                    <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M12 20a8 8 0 1 1 0-16 8 8 0 0 1 0 16zm0-14a6 6 0 1 0 0 12 6 6 0 0 0 0-12zm0 9a3 3 0 1 1 0-6 3 3 0 0 1 0 6z"/></svg>
-                </button>
-                <button id="btn-dropdown" class="tool-btn" title="Form Dropdown" data-tool="dropdown">
-                    <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M5 7h14v4H5V7zm0 6h14v4H5v-4zm10 1l-3 3-3-3h6z"/></svg>
-                </button>
-                <button id="btn-date" class="tool-btn" title="Form Date Field" data-tool="date">
-                    <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M7 11h2v2H7v-2zm4 0h2v2h-2v-2zm4 0h2v2h-2v-2zM19 4h-1V2h-2v2H8V2H6v2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 16H5V9h14v11z"/></svg>
                 </button>
             </div>
 
@@ -201,6 +223,12 @@
                     </div>
                 </div>
 
+                <!-- Tool hint banner (for placement instructions) -->
+                <div id="tool-hint-banner" class="tool-hint-banner hidden" role="status" aria-live="polite">
+                    <span class="tool-hint-banner-icon" aria-hidden="true">✨</span>
+                    <span id="tool-hint-banner-text"></span>
+                </div>
+
                 <div class="pdf-workspace">
                     <!-- Pages Sidebar -->
                     <aside class="pages-sidebar" id="pages-sidebar" aria-label="Pages">
@@ -233,15 +261,83 @@
                             <!-- PDF pages will be rendered here -->
                         </div>
                     </div>
+
+                    <!-- Fields Sidebar (shown in Fill mode) -->
+                    <aside class="fields-sidebar hidden" id="fields-sidebar" aria-label="Form Fields">
+                        <div class="fields-sidebar-header">
+                            <div class="fields-sidebar-title" id="fields-sidebar-title">Form Fields</div>
+                            <button type="button" class="fields-sidebar-close" id="fields-sidebar-close" title="Close sidebar">
+                                <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+                            </button>
+                        </div>
+                        <div class="fields-sidebar-content">
+                            <div id="fields-list-wrap">
+                                <div class="fields-list" id="fields-list" role="list">
+                                    <!-- Form fields will be listed here -->
+                                </div>
+                            </div>
+                            <div id="fields-detail-wrap" class="hidden">
+                                <button type="button" class="fields-back-btn" id="fields-back-btn" title="Back to list">
+                                    <svg viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z"/></svg>
+                                    Back to list
+                                </button>
+                                <div id="fields-detail-body">
+                                    <!-- Field config populated here -->
+                                </div>
+                            </div>
+                        </div>
+                        <div class="fields-sidebar-footer">
+                            <small class="fields-hint" id="fields-sidebar-hint">Use the inputs above to fill fields. Tab to move between fields. Click a field on the document to select it.</small>
+                        </div>
+                    </aside>
+
+                    <!-- Field Properties Sidebar (shown in Edit mode when form field selected) -->
+                    <aside class="field-properties-sidebar hidden" id="field-properties-sidebar" aria-label="Field Properties">
+                        <div class="field-properties-header">
+                            <div class="field-properties-title">Field Properties</div>
+                            <button type="button" class="field-properties-close" id="field-properties-close" title="Close">
+                                <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+                            </button>
+                        </div>
+                        <div class="field-properties-body" id="field-properties-body">
+                            <!-- Populated dynamically based on selected field type -->
+                        </div>
+                    </aside>
                 </div>
             </div>
         </main>
 
-        <!-- Signature Modal -->
+        <!-- Signature Field Modal (for placing empty signature boxes when editing) -->
+        <div id="signature-field-modal" class="modal hidden">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h3>Add Signature Field</h3>
+                    <button class="modal-close" id="signature-field-modal-close">&times;</button>
+                </div>
+                <div class="modal-body">
+                    <p class="sig-disclosure">
+                        Place an empty signature box on the document. Use this when designing a form that others will sign later.
+                    </p>
+                    <div class="sig-field">
+                        <label for="sig-field-label">Field label <span class="required">*</span></label>
+                        <input type="text" id="sig-field-label" placeholder="e.g. Tenant, Parent 1, Signer 1" class="sig-input" required>
+                        <small class="sig-field-hint">A label for this signature slot (e.g. "Tenant 1", "Parent 2"). This identifies who should sign here.</small>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <div class="modal-footer-buttons">
+                        <button id="sig-field-cancel" class="btn btn-secondary">Cancel</button>
+                        <button id="sig-field-add" class="btn btn-primary" disabled>Add Field</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Signature Modal (for actually signing the document) -->
         <div id="signature-modal" class="modal hidden">
             <div class="modal-content">
                 <div class="modal-header">
-                    <h3>Create Signature</h3>
+                    <h3>Sign Document</h3>
                     <button class="modal-close" id="signature-modal-close">&times;</button>
                 </div>
                 <div class="modal-body">
@@ -259,9 +355,15 @@
                         </label>
                     </div>
                     <div class="sig-identity">
-                        <div class="sig-field">
-                            <label for="sig-name">Signer name <span class="required">*</span></label>
-                            <input type="text" id="sig-name" placeholder="Full name" class="sig-input" required>
+                        <div class="sig-field" id="sig-field-slot-wrap">
+                            <label for="sig-name">Signature field <span class="required">*</span></label>
+                            <input type="text" id="sig-name" placeholder="e.g. Tenant, Landlord, Parent 1" class="sig-input" required>
+                            <small class="sig-field-hint">Identifies which signature slot this is. Must match the field on the document.</small>
+                        </div>
+                        <div class="sig-field" id="sig-printed-name-wrap">
+                            <label for="sig-printed-name">Your printed name <span class="optional">(optional)</span></label>
+                            <input type="text" id="sig-printed-name" placeholder="e.g. John Doe" class="sig-input">
+                            <small class="sig-field-hint">Your legal name for the audit trail. Often printed below the signature.</small>
                         </div>
                         <div class="sig-field">
                             <label for="sig-email">Email <span class="optional">(optional)</span></label>
@@ -309,8 +411,11 @@
                     </div>
                 </div>
                 <div class="modal-footer">
-                    <button id="sig-cancel" class="btn btn-secondary">Cancel</button>
-                    <button id="sig-apply" class="btn btn-primary" disabled>Insert Signature</button>
+                    <p class="sig-place-hint">After clicking Insert Signature, click on the document where the signature should appear. You can place multiple signatures (e.g. for different signers) by repeating: create signature → Insert → click on page.</p>
+                    <div class="modal-footer-buttons">
+                        <button id="sig-cancel" class="btn btn-secondary">Cancel</button>
+                        <button id="sig-apply" class="btn btn-primary" disabled>Insert Signature</button>
+                    </div>
                 </div>
             </div>
         </div>
@@ -417,7 +522,7 @@
                     <button class="modal-close" id="expected-signers-modal-close">&times;</button>
                 </div>
                 <div class="modal-body">
-                    <p class="bulk-fill-hint">Add or remove signers in the order they should sign. The number can default from signature placements on the document.</p>
+                    <p class="bulk-fill-hint">Map each signature field to an email. <strong>Signature field</strong> must match the field label on the document (e.g. Tenant, Landlord). <strong>Email</strong> is where to send. The first signer is emailed first; they forward to the next.</p>
                     <div class="expected-signers-toolbar">
                         <button type="button" id="expected-signers-add" class="btn btn-primary">Add signer</button>
                     </div>
@@ -615,13 +720,13 @@
 
                     <div id="bulk-fill-email-section" class="bulk-fill-email-section hidden">
                         <h4>Send emails (optional)</h4>
-                        <p class="bulk-fill-hint">Select one or more columns that contain recipient emails (e.g. one column per signer). You can add an email directly in a row if it’s missing. Send is only allowed when at least one email is set for that row.</p>
+                        <p class="bulk-fill-hint">Select one or more columns that contain recipient emails (one per signer, in order). You can add an email directly in a row if it’s missing. Only the first signer is emailed; they forward to the next.</p>
                         <div class="bulk-fill-email-row">
                             <div class="send-field">
                                 <label for="bulk-fill-email-column">Email column(s)</label>
                                 <select id="bulk-fill-email-column" class="send-input bulk-fill-select" multiple size="4">
                                 </select>
-                                <small class="bulk-fill-hint">Hold Ctrl/Cmd to select multiple columns (e.g. signer 1, signer 2).</small>
+                                <small class="bulk-fill-hint">First selected = first signer (they get the email). Add columns in signing order.</small>
                             </div>
                             <div class="send-field">
                                 <label for="bulk-fill-email-template">Email template</label>

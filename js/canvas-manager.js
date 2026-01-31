@@ -8,6 +8,7 @@ export class CanvasManager {
         this.activeCanvas = null;
         this.activePageId = null;
         this.activeTool = 'select';
+        this.fillMode = false; // Whether in fill mode (form filling/signing)
         this.history = new Map(); // pageId -> {undoStack, redoStack}
         this.currentScale = 1.0;
         this._restoringPages = new Set(); // pageId currently being restored from history
@@ -35,6 +36,9 @@ export class CanvasManager {
         // Signature data
         this.signatureImage = null;
         this.signatureMeta = null;
+
+        // Signature field data
+        this.signatureFieldLabel = null;
 
         // Image insert
         this.pendingImageDataUrl = null;
@@ -176,6 +180,47 @@ export class CanvasManager {
     handleMouseDown(e, canvas, pageId) {
         const pointer = canvas.getPointer(e.e);
 
+        // In Fill mode, handle single-click on form fields
+        if (this.fillMode && e.target) {
+            const annotationType = e.target._annotationType;
+            
+            // Select the field to focus sidebar input
+            if (['textfield', 'date', 'dropdown', 'checkbox', 'radio', 'signature-field'].includes(annotationType)) {
+                canvas.setActiveObject(e.target);
+                this.onSelectionChanged(canvas); // Force update toolbar
+            }
+            
+            if (annotationType === 'textfield' || annotationType === 'date') {
+                // Show inline HTML input overlay for direct editing
+                this._showInlineTextEditor(e.target, canvas);
+                return;
+            }
+            if (annotationType === 'dropdown') {
+                // Show inline HTML select overlay
+                this._showInlineDropdownEditor(e.target, canvas);
+                return;
+            }
+            if (annotationType === 'checkbox' || annotationType === 'radio') {
+                // Toggle directly on canvas
+                if (annotationType === 'checkbox') {
+                    this.toggleCheckbox(e.target, canvas);
+                } else {
+                    this.toggleRadio(e.target, canvas);
+                }
+                this._highlightField(e.target, canvas);
+                window.dispatchEvent(new CustomEvent('field-updated'));
+                return;
+            }
+            if (annotationType === 'signature-field') {
+                // Dispatch to open signature modal
+                window.dispatchEvent(new CustomEvent('form-field-selected', {
+                    detail: { object: e.target, annotationType, pageId }
+                }));
+                this._highlightField(e.target, canvas);
+                return;
+            }
+        }
+
         switch (this.activeTool) {
             case 'text':
                 this.addTextBox(canvas, pointer.x, pointer.y);
@@ -230,6 +275,9 @@ export class CanvasManager {
                     this.insertSignature(canvas, pointer.x, pointer.y);
                 }
                 break;
+            case 'signature-field':
+                this.insertSignatureField(canvas, pointer.x, pointer.y);
+                break;
             case 'eraser':
                 this.eraseAtPoint(canvas, pointer.x, pointer.y);
                 break;
@@ -252,6 +300,69 @@ export class CanvasManager {
      * Set the active tool
      * @param {string} tool - Tool name
      */
+    /**
+     * Apply fill-mode or edit-mode interactivity to an object
+     * @param {fabric.Object} obj - The object to update
+     * @param {boolean} fillMode - Whether we're in fill mode
+     * @param {string} activeTool - Current active tool
+     */
+    _applyObjectInteractivity(obj, fillMode, activeTool) {
+        const isFormField = obj._annotationType === 'textfield' ||
+                           obj._annotationType === 'checkbox' ||
+                           obj._annotationType === 'radio' ||
+                           obj._annotationType === 'dropdown' ||
+                           obj._annotationType === 'date';
+        const isSignatureField = obj._annotationType === 'signature-field';
+
+        if (fillMode) {
+            if (isFormField || isSignatureField) {
+                obj.set({
+                    selectable: false,
+                    evented: true,
+                    hasControls: false,
+                    hasBorders: false,
+                    lockMovementX: true,
+                    lockMovementY: true,
+                    lockScalingX: true,
+                    lockScalingY: true,
+                    lockRotation: true
+                });
+            } else {
+                obj.set({ selectable: false, evented: false });
+            }
+        } else if (activeTool === 'select') {
+            obj.set({
+                selectable: true,
+                evented: true,
+                hasControls: true,
+                hasBorders: true,
+                lockMovementX: false,
+                lockMovementY: false,
+                lockScalingX: false,
+                lockScalingY: false,
+                lockRotation: false
+            });
+        } else {
+            obj.set({ selectable: false, evented: false });
+        }
+    }
+
+    /**
+     * Set fill mode (form filling/signing mode)
+     * @param {boolean} enabled - Whether fill mode is enabled
+     */
+    setFillMode(enabled) {
+        this.fillMode = enabled;
+
+        this.canvases.forEach((canvas) => {
+            canvas.forEachObject((obj) => {
+                this._applyObjectInteractivity(obj, enabled, this.activeTool);
+            });
+            canvas.discardActiveObject();
+            canvas.renderAll();
+        });
+    }
+
     setTool(tool) {
         this.activeTool = tool;
 
@@ -266,17 +377,15 @@ export class CanvasManager {
             }
 
             if (tool === 'select') {
-                canvas.selection = true;
+                canvas.selection = !this.fillMode; // Disable box selection in fill mode
                 canvas.forEachObject((obj) => {
-                    obj.selectable = true;
-                    obj.evented = true;
+                    this._applyObjectInteractivity(obj, this.fillMode, 'select');
                 });
             } else if (tool !== 'draw') {
                 canvas.selection = false;
                 canvas.discardActiveObject();
                 canvas.forEachObject((obj) => {
-                    obj.selectable = false;
-                    obj.evented = false;
+                    this._applyObjectInteractivity(obj, this.fillMode, tool);
                 });
                 canvas.renderAll();
             }
@@ -692,11 +801,266 @@ export class CanvasManager {
     /**
      * Add a form text field
      */
-    addFormTextField(canvas, x, y) {
-        const fieldWidth = 200 / this.currentScale;
-        const fieldHeight = 30 / this.currentScale;
+    /**
+     * Highlight a field briefly to show it was selected (Fill mode)
+     */
+    _highlightField(field, canvas) {
+        // Store original stroke
+        const originalStroke = field.stroke;
+        const originalStrokeWidth = field.strokeWidth;
+        
+        // Apply highlight
+        field.set({
+            stroke: '#2563eb',
+            strokeWidth: 2
+        });
+        canvas.renderAll();
+        
+        // Remove highlight after a short delay
+        setTimeout(() => {
+            field.set({
+                stroke: originalStroke || '#d1d5db',
+                strokeWidth: originalStrokeWidth || 1
+            });
+            canvas.renderAll();
+        }, 300);
+    }
 
-        // Create field background
+    /**
+     * Show an inline HTML input over a text/date field for direct editing (Fill mode)
+     */
+    _showInlineTextEditor(group, canvas) {
+        // Remove any existing inline editor
+        this._removeInlineEditor();
+        
+        const rect = group.getBoundingRect(true);
+        const container = (canvas.lowerCanvas?.parentElement?.parentElement) || (canvas.wrapperEl?.parentElement);
+        if (!container) return;
+        
+        const isDateField = group._annotationType === 'date';
+        const currentValue = group._fieldValue || '';
+        const objects = group.getObjects();
+        const hasNewStructure = objects.length >= 3;
+        const valueText = hasNewStructure ? objects[2] : objects[1];
+        const fontSize = valueText ? Math.max(10, Math.round(valueText.fontSize * this.currentScale)) : 12;
+        
+        const input = document.createElement('input');
+        input.type = isDateField ? 'date' : 'text';
+        input.value = currentValue;
+        input.className = 'inline-field-editor';
+        input.style.cssText = `
+            position: absolute;
+            left: ${rect.left}px;
+            top: ${rect.top}px;
+            width: ${Math.max(60, rect.width - 4)}px;
+            height: ${Math.max(24, rect.height - 4)}px;
+            font-size: ${fontSize}px;
+            padding: 2px 6px;
+            border: 2px solid #2563eb;
+            border-radius: 4px;
+            outline: none;
+            box-sizing: border-box;
+            z-index: 1000;
+        `;
+        
+        const commit = (val) => {
+            this._removeInlineEditor();
+            group._fieldValue = val || '';
+            const placeholder = isDateField ? 'YYYY-MM-DD' : 'Enter value';
+            if (valueText) {
+                valueText.set({
+                    text: val || placeholder,
+                    fill: val ? '#000000' : '#9ca3af',
+                    fontStyle: val ? 'normal' : 'italic'
+                });
+            }
+            canvas.renderAll();
+            window.dispatchEvent(new CustomEvent('field-updated'));
+        };
+        
+        input.addEventListener('blur', () => commit(input.value));
+        input.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                input.blur();
+            }
+            if (e.key === 'Escape') {
+                e.preventDefault();
+                this._removeInlineEditor();
+            }
+        });
+        
+        container.appendChild(input);
+        input.focus();
+        input.select();
+        this._inlineEditorEl = input;
+    }
+
+    /**
+     * Show an inline HTML select over a dropdown field (Fill mode)
+     */
+    _showInlineDropdownEditor(group, canvas) {
+        this._removeInlineEditor();
+        
+        const options = group._options || [];
+        if (options.length === 0) {
+            return;
+        }
+        
+        const rect = group.getBoundingRect(true);
+        const container = (canvas.lowerCanvas?.parentElement?.parentElement) || (canvas.wrapperEl?.parentElement);
+        if (!container) return;
+        
+        const objects = group.getObjects();
+        const hasNewStructure = objects.length >= 4;
+        const valueText = hasNewStructure ? objects[2] : objects[1];
+        
+        const select = document.createElement('select');
+        select.className = 'inline-field-editor';
+        select.style.cssText = `
+            position: absolute;
+            left: ${rect.left}px;
+            top: ${rect.top}px;
+            width: ${Math.max(80, rect.width - 4)}px;
+            height: ${Math.max(24, rect.height - 4)}px;
+            font-size: 12px;
+            padding: 2px 6px;
+            border: 2px solid #2563eb;
+            border-radius: 4px;
+            outline: none;
+            box-sizing: border-box;
+            z-index: 1000;
+            cursor: pointer;
+        `;
+        
+        const emptyOpt = document.createElement('option');
+        emptyOpt.value = '';
+        emptyOpt.textContent = 'Select...';
+        select.appendChild(emptyOpt);
+        options.forEach(opt => {
+            const o = document.createElement('option');
+            o.value = opt;
+            o.textContent = opt;
+            if (opt === group._selectedOption) o.selected = true;
+            select.appendChild(o);
+        });
+        
+        const commit = (val) => {
+            this._removeInlineEditor();
+            group._selectedOption = val || '';
+            if (valueText) {
+                valueText.set({
+                    text: val || 'Select...',
+                    fill: val ? '#000000' : '#9ca3af',
+                    fontStyle: val ? 'normal' : 'italic'
+                });
+            }
+            canvas.renderAll();
+            window.dispatchEvent(new CustomEvent('field-updated'));
+        };
+        
+        select.addEventListener('change', () => commit(select.value));
+        select.addEventListener('blur', () => commit(select.value));
+        select.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape') {
+                e.preventDefault();
+                this._removeInlineEditor();
+            }
+        });
+        
+        container.appendChild(select);
+        select.focus();
+        this._inlineEditorEl = select;
+    }
+
+    /**
+     * Remove the inline editor overlay if present
+     */
+    _removeInlineEditor() {
+        if (this._inlineEditorEl && this._inlineEditorEl.parentNode) {
+            this._inlineEditorEl.parentNode.removeChild(this._inlineEditorEl);
+        }
+        this._inlineEditorEl = null;
+    }
+
+    /**
+     * Helper to fix text scaling in form field groups.
+     * When a group is scaled, text gets distorted. This handler
+     * resets text scale and repositions text to stay within bounds.
+     */
+    _setupFormFieldScaling(group, canvas, padding) {
+        group.on('scaling', () => {
+            // During scaling, we need to counteract the scale on text objects
+            const objects = group.getObjects();
+            const scaleX = group.scaleX;
+            const scaleY = group.scaleY;
+            
+            // Reset text scale to maintain original size
+            for (let i = 1; i < objects.length; i++) {
+                const obj = objects[i];
+                if (obj.type === 'text' || obj.type === 'i-text') {
+                    // Counteract group scale to keep text unscaled
+                    obj.set({
+                        scaleX: 1 / scaleX,
+                        scaleY: 1 / scaleY
+                    });
+                }
+            }
+        });
+        
+        group.on('scaled', () => {
+            const objects = group.getObjects();
+            const background = objects[0];
+            const scaleX = group.scaleX;
+            const scaleY = group.scaleY;
+            
+            // Get the new actual dimensions
+            const newWidth = background.width * scaleX;
+            const newHeight = background.height * scaleY;
+            
+            // Reset group scale to 1 and update background size directly
+            group.set({ scaleX: 1, scaleY: 1 });
+            background.set({ width: newWidth, height: newHeight });
+            
+            // Reset text scale and reposition
+            for (let i = 1; i < objects.length; i++) {
+                const obj = objects[i];
+                if (obj.type === 'text' || obj.type === 'i-text') {
+                    // Reset text scale to 1 (normal)
+                    obj.set({ scaleX: 1, scaleY: 1 });
+                    
+                    // Reposition within new bounds
+                    if (i === 1) {
+                        // Label - top left
+                        obj.set({
+                            left: -newWidth / 2 + padding,
+                            top: -newHeight / 2 + padding
+                        });
+                    } else if (i === 2) {
+                        // Value - below label
+                        const labelHeight = objects[1].fontSize || 10;
+                        obj.set({
+                            left: -newWidth / 2 + padding,
+                            top: -newHeight / 2 + padding + labelHeight + 2
+                        });
+                    }
+                }
+            }
+            
+            group.setCoords();
+            canvas.renderAll();
+        });
+    }
+
+    addFormTextField(canvas, x, y) {
+        const defaultName = this.getNextDefaultFieldId('textfield');
+        const fieldWidth = 150 / this.currentScale; // Smaller default width
+        const fieldHeight = 32 / this.currentScale; // Smaller height
+        const labelFontSize = 10 / this.currentScale; // Larger label for readability
+        const valueFontSize = 12 / this.currentScale;
+        const padding = 4 / this.currentScale;
+
+        // Create field background (centered at origin)
         const background = new fabric.Rect({
             width: fieldWidth,
             height: fieldHeight,
@@ -704,25 +1068,55 @@ export class CanvasManager {
             stroke: '#2563eb',
             strokeWidth: 1 / this.currentScale,
             rx: 3 / this.currentScale,
-            ry: 3 / this.currentScale
+            ry: 3 / this.currentScale,
+            originX: 'center',
+            originY: 'center',
+            left: 0,
+            top: 0
         });
 
-        // Create placeholder text
-        const placeholder = new fabric.IText('Text field', {
-            fontSize: 12 / this.currentScale,
+        // Create label text (small, at top-left inside field)
+        const label = new fabric.Text(defaultName, {
+            fontSize: labelFontSize,
             fontFamily: 'Arial',
             fill: '#6b7280',
-            editable: true
+            originX: 'left',
+            originY: 'top',
+            left: -fieldWidth / 2 + padding,
+            top: -fieldHeight / 2 + padding
+        });
+
+        // Create value text (larger, below label) - show placeholder hint
+        const valueText = new fabric.Text('Double-click to fill', {
+            fontSize: valueFontSize,
+            fontFamily: 'Arial',
+            fill: '#9ca3af', // Light gray for placeholder
+            fontStyle: 'italic',
+            originX: 'left',
+            originY: 'top',
+            left: -fieldWidth / 2 + padding,
+            top: -fieldHeight / 2 + padding + labelFontSize + 2 / this.currentScale
         });
 
         // Group them
-        const group = new fabric.Group([background, placeholder], {
+        const group = new fabric.Group([background, label, valueText], {
             left: x,
             top: y,
             selectable: true,
             _annotationType: 'textfield',
             _fieldValue: '',
-            _fieldName: '' // Field name for bulk filling
+            _fieldName: defaultName,
+            _labelFontSize: labelFontSize,
+            _valueFontSize: valueFontSize,
+            _padding: padding
+        });
+
+        // Prevent text distortion on resize
+        this._setupFormFieldScaling(group, canvas, padding);
+
+        // Add double-click handler to edit the field (inline editor)
+        group.on('mousedblclick', () => {
+            this._showInlineTextEditor(group, canvas);
         });
 
         canvas.add(group);
@@ -739,6 +1133,7 @@ export class CanvasManager {
      * Add a form checkbox
      */
     addFormCheckbox(canvas, x, y) {
+        const defaultName = this.getNextDefaultFieldId('checkbox');
         const size = 20 / this.currentScale;
 
         // Create checkbox background
@@ -758,7 +1153,7 @@ export class CanvasManager {
             selectable: true,
             _annotationType: 'checkbox',
             _checked: false,
-            _fieldName: '' // Field name for bulk filling
+            _fieldName: defaultName
         });
 
         // Toggle on double click
@@ -780,6 +1175,7 @@ export class CanvasManager {
      * Add a form radio button
      */
     addFormRadio(canvas, x, y) {
+        const defaultName = this.getNextDefaultFieldId('radio');
         const size = 20 / this.currentScale;
         const outer = new fabric.Circle({
             radius: size / 2,
@@ -798,8 +1194,8 @@ export class CanvasManager {
             selectable: true,
             _annotationType: 'radio',
             _checked: false,
-            _fieldName: '',
-            _radioGroup: '', // alias to _fieldName for serialization compatibility
+            _fieldName: defaultName,
+            _radioGroup: defaultName,
             _radioValue: `option_${Math.random().toString(36).slice(2, 10)}`
         });
 
@@ -858,8 +1254,13 @@ export class CanvasManager {
      * Add a form dropdown field
      */
     addFormDropdown(canvas, x, y) {
-        const fieldWidth = 220 / this.currentScale;
-        const fieldHeight = 32 / this.currentScale;
+        const defaultName = this.getNextDefaultFieldId('dropdown');
+        const fieldWidth = 180 / this.currentScale; // Smaller default width
+        const fieldHeight = 32 / this.currentScale; // Smaller height
+        const labelFontSize = 10 / this.currentScale; // Larger label for readability
+        const valueFontSize = 12 / this.currentScale;
+        const padding = 4 / this.currentScale;
+
         const background = new fabric.Rect({
             width: fieldWidth,
             height: fieldHeight,
@@ -867,45 +1268,69 @@ export class CanvasManager {
             stroke: '#2563eb',
             strokeWidth: 1 / this.currentScale,
             rx: 3 / this.currentScale,
-            ry: 3 / this.currentScale
-        });
-        const label = new fabric.Textbox('Dropdown', {
-            width: fieldWidth - 34 / this.currentScale,
-            fontSize: 12 / this.currentScale,
-            fontFamily: 'Arial',
-            fill: '#6b7280',
-            left: 8 / this.currentScale,
-            top: 8 / this.currentScale,
-            editable: false
-        });
-        const chevron = new fabric.Triangle({
-            width: 10 / this.currentScale,
-            height: 8 / this.currentScale,
-            fill: '#6b7280',
-            left: fieldWidth - 16 / this.currentScale,
-            top: fieldHeight / 2,
+            ry: 3 / this.currentScale,
             originX: 'center',
             originY: 'center',
+            left: 0,
+            top: 0
+        });
+
+        // Small label at top-left
+        const label = new fabric.Text(defaultName, {
+            fontSize: labelFontSize,
+            fontFamily: 'Arial',
+            fill: '#6b7280',
+            originX: 'left',
+            originY: 'top',
+            left: -fieldWidth / 2 + padding,
+            top: -fieldHeight / 2 + padding
+        });
+
+        // Value text (larger, below label) - show placeholder hint
+        const valueText = new fabric.Text('Double-click to select', {
+            fontSize: valueFontSize,
+            fontFamily: 'Arial',
+            fill: '#9ca3af',
+            fontStyle: 'italic',
+            originX: 'left',
+            originY: 'top',
+            left: -fieldWidth / 2 + padding,
+            top: -fieldHeight / 2 + padding + labelFontSize + 2 / this.currentScale
+        });
+
+        const chevron = new fabric.Triangle({
+            width: 8 / this.currentScale,
+            height: 6 / this.currentScale,
+            fill: '#6b7280',
+            originX: 'center',
+            originY: 'center',
+            left: fieldWidth / 2 - 12 / this.currentScale,
+            top: 0,
             angle: 180
         });
-        const group = new fabric.Group([background, label, chevron], {
+
+        const group = new fabric.Group([background, label, valueText, chevron], {
             left: x,
             top: y,
             selectable: true,
             _annotationType: 'dropdown',
-            _fieldName: '',
+            _fieldName: defaultName,
             _options: ['Option 1', 'Option 2'],
-            _selectedOption: ''
+            _selectedOption: '',
+            _labelFontSize: labelFontSize,
+            _valueFontSize: valueFontSize,
+            _padding: padding
         });
+        
+        // Prevent text distortion on resize
+        this._setupFormFieldScaling(group, canvas, padding);
+        
         group.on('mousedblclick', () => {
-            const raw = prompt('Dropdown options (comma separated):', (group._options || []).join(', '));
-            if (raw == null) return;
-            group._options = raw
-                .split(',')
-                .map((s) => s.trim())
-                .filter(Boolean);
-            label.text = group._selectedOption || 'Dropdown';
-            canvas.renderAll();
+            if (this.fillMode) {
+                // In fill mode: show inline select overlay
+                this._showInlineDropdownEditor(group, canvas);
+            }
+            // In edit mode: selecting the dropdown already shows Field Properties sidebar
         });
         canvas.add(group);
         canvas.setActiveObject(group);
@@ -920,8 +1345,13 @@ export class CanvasManager {
      * Add a form date field (visual text field with date placeholder)
      */
     addFormDateField(canvas, x, y) {
-        const fieldWidth = 200 / this.currentScale;
-        const fieldHeight = 30 / this.currentScale;
+        const defaultName = this.getNextDefaultFieldId('date');
+        const fieldWidth = 150 / this.currentScale; // Smaller default width
+        const fieldHeight = 32 / this.currentScale; // Smaller height
+        const labelFontSize = 10 / this.currentScale; // Larger label for readability
+        const valueFontSize = 12 / this.currentScale;
+        const padding = 4 / this.currentScale;
+
         const background = new fabric.Rect({
             width: fieldWidth,
             height: fieldHeight,
@@ -929,22 +1359,55 @@ export class CanvasManager {
             stroke: '#2563eb',
             strokeWidth: 1 / this.currentScale,
             rx: 3 / this.currentScale,
-            ry: 3 / this.currentScale
+            ry: 3 / this.currentScale,
+            originX: 'center',
+            originY: 'center',
+            left: 0,
+            top: 0
         });
-        const placeholder = new fabric.IText('YYYY-MM-DD', {
-            fontSize: 12 / this.currentScale,
+
+        // Create label text (small, at top-left inside field)
+        const label = new fabric.Text(defaultName, {
+            fontSize: labelFontSize,
             fontFamily: 'Arial',
             fill: '#6b7280',
-            editable: true
+            originX: 'left',
+            originY: 'top',
+            left: -fieldWidth / 2 + padding,
+            top: -fieldHeight / 2 + padding
         });
-        const group = new fabric.Group([background, placeholder], {
+
+        // Create value text with placeholder (larger, below label)
+        const valueText = new fabric.Text('YYYY-MM-DD', {
+            fontSize: valueFontSize,
+            fontFamily: 'Arial',
+            fill: '#9ca3af', // Lighter color for placeholder
+            originX: 'left',
+            originY: 'top',
+            left: -fieldWidth / 2 + padding,
+            top: -fieldHeight / 2 + padding + labelFontSize + 2 / this.currentScale
+        });
+
+        const group = new fabric.Group([background, label, valueText], {
             left: x,
             top: y,
             selectable: true,
             _annotationType: 'date',
             _fieldValue: '',
-            _fieldName: ''
+            _fieldName: defaultName,
+            _labelFontSize: labelFontSize,
+            _valueFontSize: valueFontSize,
+            _padding: padding
         });
+        
+        // Prevent text distortion on resize
+        this._setupFormFieldScaling(group, canvas, padding);
+        
+        // Add double-click handler to edit the field (inline editor)
+        group.on('mousedblclick', () => {
+            this._showInlineTextEditor(group, canvas);
+        });
+        
         canvas.add(group);
         canvas.setActiveObject(group);
         canvas.renderAll();
@@ -983,6 +1446,40 @@ export class CanvasManager {
         }
 
         canvas.renderAll();
+    }
+
+    /**
+     * Edit a text field (textfield or date field) - shows inline editor instead of prompt
+     */
+    editTextField(group, canvas) {
+        this._showInlineTextEditor(group, canvas);
+    }
+
+    /**
+     * Update the label text of a form field
+     */
+    updateFieldLabel(group, canvas, newLabel) {
+        const objects = group.getObjects();
+        const hasNewStructure = objects.length >= 3;
+        
+        if (hasNewStructure) {
+            const labelText = objects[1]; // Label is the second object
+            if (labelText && labelText.type === 'text') {
+                labelText.set('text', newLabel || 'Text Field');
+                canvas.renderAll();
+            }
+        }
+    }
+
+    /**
+     * Select a value from a dropdown field - shows inline select overlay instead of prompt
+     */
+    selectDropdownValue(group, canvas) {
+        const options = group._options || [];
+        if (options.length === 0) {
+            return;
+        }
+        this._showInlineDropdownEditor(group, canvas);
     }
 
     /**
@@ -1028,6 +1525,123 @@ export class CanvasManager {
         this.setTool('select');
         document.querySelector('[data-tool="select"]')?.classList.add('active');
         document.querySelector('[data-tool="signature"]')?.classList.remove('active');
+    }
+
+    /**
+     * Replace a signature field with an actual signature
+     * @param {fabric.Group} signatureField - The signature field to replace
+     * @param {fabric.Canvas} canvas - The canvas containing the field
+     */
+    replaceSignatureField(signatureField, canvas) {
+        if (!this.signatureImage || !signatureField) return;
+
+        const meta = this.signatureMeta ? { ...this.signatureMeta } : {};
+        meta.timestamp = new Date().toISOString();
+        meta.replacedFieldLabel = signatureField._signatureFieldLabel;
+
+        // Get the position and size of the signature field
+        const bounds = signatureField.getBoundingRect();
+        const left = bounds.left;
+        const top = bounds.top;
+        const width = bounds.width;
+        const height = bounds.height;
+
+        fabric.Image.fromURL(this.signatureImage, (img) => {
+            // Scale signature to fit within the field bounds
+            const scaleX = width / img.width;
+            const scaleY = height / img.height;
+            const scale = Math.min(scaleX, scaleY) * 0.9; // 90% to leave some padding
+
+            img.set({
+                left: left,
+                top: top,
+                scaleX: scale,
+                scaleY: scale,
+                selectable: this.fillMode ? false : true, // Not selectable in fill mode
+                _annotationType: 'signature',
+                _signatureMeta: meta
+            });
+
+            // Remove the signature field
+            canvas.remove(signatureField);
+            
+            // Add the signature
+            canvas.add(img);
+            canvas.renderAll();
+            
+            // Trigger field update event
+            if (typeof window !== 'undefined') {
+                window.dispatchEvent(new CustomEvent('signature-field-filled', { 
+                    detail: { fieldLabel: signatureField._signatureFieldLabel, signerName: meta.signerName }
+                }));
+            }
+        });
+    }
+
+    /**
+     * Set the label for the next signature field to be placed
+     * @param {string} label - Label for the signature field (e.g. "Tenant 1", "Parent 1")
+     */
+    setSignatureFieldLabel(label) {
+        this.signatureFieldLabel = label || 'Signature';
+    }
+
+    /**
+     * Insert an empty signature field (box with label) at the specified position
+     */
+    insertSignatureField(canvas, x, y) {
+        const label = this.getNextDefaultFieldId('signature-field');
+        
+        // Create a group with a rectangle and text label
+        const width = 200 / this.currentScale;
+        const height = 60 / this.currentScale;
+        const fontSize = 14 / this.currentScale;
+
+        const rect = new fabric.Rect({
+            width: width,
+            height: height,
+            fill: 'rgba(255, 255, 200, 0.3)',
+            stroke: '#999',
+            strokeWidth: 2 / this.currentScale,
+            strokeDashArray: [5 / this.currentScale, 5 / this.currentScale],
+            rx: 4 / this.currentScale,
+            ry: 4 / this.currentScale
+        });
+
+        const text = new fabric.Text(`${label}\n(Double-click to sign)`, {
+            fontSize: fontSize,
+            fill: '#666',
+            textAlign: 'center',
+            originX: 'center',
+            originY: 'center',
+            left: width / 2,
+            top: height / 2
+        });
+
+        const group = new fabric.Group([rect, text], {
+            left: x,
+            top: y,
+            selectable: true,
+            _annotationType: 'signature-field',
+            _signatureFieldLabel: label
+        });
+
+        canvas.add(group);
+        canvas.setActiveObject(group);
+        canvas.renderAll();
+
+        // Notify that field was placed (for hiding hint banner)
+        if (typeof window !== 'undefined') {
+            window.dispatchEvent(new CustomEvent('signature-field-placed'));
+        }
+
+        // Trigger selection change so Field Properties sidebar shows
+        this.onSelectionChanged(canvas);
+
+        // Switch to select tool
+        this.setTool('select');
+        document.querySelector('[data-tool="select"]')?.classList.add('active');
+        document.querySelector('[data-tool="signature-field"]')?.classList.remove('active');
     }
 
     /**
@@ -1107,6 +1721,7 @@ export class CanvasManager {
                 '_fieldValue',
                 '_fieldName',
                 '_signatureMeta',
+                '_signatureFieldLabel',
                 '_noteText',
                 '_stampText',
                 '_options',
@@ -1144,7 +1759,9 @@ export class CanvasManager {
         canvas.loadFromJSON(prevState, () => {
             canvas.forEachObject((obj) => {
                 obj._fromHistory = true;
+                this._applyObjectInteractivity(obj, this.fillMode, this.activeTool);
             });
+            canvas.discardActiveObject();
             canvas.renderAll();
             this._restoringPages.delete(pageId);
             this._onHistoryChange?.();
@@ -1167,7 +1784,9 @@ export class CanvasManager {
         canvas.loadFromJSON(nextState, () => {
             canvas.forEachObject((obj) => {
                 obj._fromHistory = true;
+                this._applyObjectInteractivity(obj, this.fillMode, this.activeTool);
             });
+            canvas.discardActiveObject();
             canvas.renderAll();
             this._restoringPages.delete(pageId);
             this._onHistoryChange?.();
@@ -1214,7 +1833,7 @@ export class CanvasManager {
             canvas.forEachObject((obj) => {
                 pageAnnotations.push({
                     type: obj._annotationType || obj.type,
-                    data: obj.toJSON(['_annotationType', '_checked', '_fieldValue', '_fieldName', '_signatureMeta']),
+                    data: obj.toJSON(['_annotationType', '_checked', '_fieldValue', '_fieldName', '_signatureMeta', '_signatureFieldLabel']),
                     object: obj
                 });
             });
@@ -1238,49 +1857,100 @@ export class CanvasManager {
             deleteBtn.disabled = !activeObject;
         }
 
-        // Show field name editor for form fields
-        const toolOptions = document.getElementById('tool-options');
-        if (toolOptions && activeObject) {
+        // Dispatch event for form field selection (for sidebar focus in Fill mode)
+        if (activeObject && this.fillMode) {
             const annotationType = activeObject._annotationType;
-            if (annotationType === 'textfield' || annotationType === 'checkbox' || annotationType === 'radio' || annotationType === 'dropdown' || annotationType === 'date') {
-                const fieldName = activeObject._fieldName || '';
-                const extra =
-                    annotationType === 'dropdown'
-                        ? `
-                    <div class="tool-option" style="margin-top: 8px;">
-                        <label>Options:</label>
-                        <input type="text" id="field-options-input" value="${(activeObject._options || []).join(', ')}" placeholder="Option 1, Option 2" style="min-width: 240px;">
-                    </div>
-                `
-                        : '';
-                toolOptions.innerHTML = `
-                    <div class="tool-option">
-                        <label>Field Name:</label>
-                        <input type="text" id="field-name-input" value="${fieldName}" placeholder="e.g. tenant_name" style="min-width: 200px;">
-                        <small style="display: block; color: #6b7280; margin-top: 4px;">Used for CSV bulk filling</small>
-                    </div>
-                    ${extra}
-                `;
-                const nameInput = document.getElementById('field-name-input');
-                if (nameInput) {
-                    nameInput.addEventListener('input', (e) => {
-                        activeObject._fieldName = e.target.value.trim();
-                        if (annotationType === 'radio') activeObject._radioGroup = activeObject._fieldName;
-                        canvas.renderAll();
-                    });
-                }
-                const optsInput = document.getElementById('field-options-input');
-                if (optsInput) {
-                    optsInput.addEventListener('input', (e) => {
-                        activeObject._options = e.target.value
-                            .split(',')
-                            .map((s) => s.trim())
-                            .filter(Boolean);
-                        canvas.renderAll();
-                    });
+            if (['textfield', 'checkbox', 'radio', 'dropdown', 'date', 'signature-field'].includes(annotationType)) {
+                window.dispatchEvent(new CustomEvent('form-field-selected', {
+                    detail: { object: activeObject, annotationType }
+                }));
+            }
+        }
+
+        // Dispatch for Field Properties sidebar (Edit mode only)
+        if (this.fillMode) {
+            window.dispatchEvent(new CustomEvent('field-properties-hide'));
+        } else if (activeObject) {
+            const annotationType = activeObject._annotationType;
+            if (['textfield', 'checkbox', 'radio', 'dropdown', 'date', 'signature-field'].includes(annotationType)) {
+                window.dispatchEvent(new CustomEvent('field-properties-show', {
+                    detail: { object: activeObject, canvas, annotationType }
+                }));
+            } else {
+                window.dispatchEvent(new CustomEvent('field-properties-hide'));
+            }
+        } else {
+            window.dispatchEvent(new CustomEvent('field-properties-hide'));
+        }
+    }
+
+    /**
+     * Get the next available default field ID for a given type.
+     * Returns e.g. "text_field_1", "text_field_2", "signature_field_1", etc.
+     */
+    getNextDefaultFieldId(type) {
+        const prefixMap = {
+            'textfield': 'text_field_',
+            'date': 'date_field_',
+            'dropdown': 'dropdown_',
+            'checkbox': 'checkbox_',
+            'radio': 'radio_',
+            'signature-field': 'signature_field_'
+        };
+        const prefix = prefixMap[type] || 'field_';
+        const existing = new Set();
+
+        for (const [, canvas] of this.canvases) {
+            for (const obj of canvas.getObjects()) {
+                if (obj._annotationType === 'signature-field') {
+                    const name = (obj._signatureFieldLabel || '').trim();
+                    if (name && name.toLowerCase().startsWith(prefix.toLowerCase())) {
+                        existing.add(name.toLowerCase());
+                    }
+                } else if (obj._fieldName) {
+                    const name = (obj._fieldName || '').trim();
+                    if (name && name.toLowerCase().startsWith(prefix.toLowerCase())) {
+                        existing.add(name.toLowerCase());
+                    }
                 }
             }
         }
+
+        let n = 1;
+        while (existing.has(`${prefix}${n}`.toLowerCase())) {
+            n++;
+        }
+        return `${prefix}${n}`;
+    }
+
+    /**
+     * Check if a field name is already used by another field
+     * @param {string} name - The field name to check
+     * @param {fabric.Object} excludeObject - The object to exclude from the check (the one being edited)
+     * @returns {boolean} True if the name is already used by another field
+     */
+    isFieldNameDuplicate(name, excludeObject) {
+        if (!name) return false;
+        
+        const lowerName = name.toLowerCase();
+        
+        for (const [pageId, canvas] of this.canvases) {
+            for (const obj of canvas.getObjects()) {
+                if (obj === excludeObject) continue;
+                
+                // Check _fieldName for form fields
+                if (obj._fieldName && obj._fieldName.toLowerCase() === lowerName) {
+                    return true;
+                }
+                
+                // Check _signatureFieldLabel for signature fields
+                if (obj._signatureFieldLabel && obj._signatureFieldLabel.toLowerCase() === lowerName) {
+                    return true;
+                }
+            }
+        }
+        
+        return false;
     }
 
     /**

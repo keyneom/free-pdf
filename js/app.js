@@ -38,6 +38,9 @@ class PDFEditorApp {
         this.signingFlowMeta = null;
         this._pendingSignatureImage = null;
         this._selectedSavedSig = null;
+        
+        /** Current mode: 'edit' (full editing) or 'fill' (signing/filling forms) */
+        this.mode = 'edit';
 
         this.init();
     }
@@ -199,6 +202,16 @@ class PDFEditorApp {
             btn.addEventListener('click', () => this.selectTool(btn));
         });
 
+        // Mode toggle
+        document.getElementById('mode-edit')?.addEventListener('click', () => this.switchMode('edit'));
+        document.getElementById('mode-fill')?.addEventListener('click', () => this.switchMode('fill'));
+
+        // Listen for signature field placement to hide hint
+        window.addEventListener('signature-field-placed', () => {
+            this.hideToolHint();
+            this.applyToolCursor('select');
+        });
+
         // Page navigation
         this.btnPrevPage.addEventListener('click', () => this.goToPage(this.pdfHandler.currentPage - 1));
         this.btnNextPage.addEventListener('click', () => this.goToPage(this.pdfHandler.currentPage + 1));
@@ -209,11 +222,59 @@ class PDFEditorApp {
         this.btnZoomOut.addEventListener('click', () => this.zoom(this.currentScale - 0.25));
         this.btnFitWidth.addEventListener('click', () => this.fitWidth());
 
-        // Signature modal
+        // Signature modals
         this.setupSignatureModal();
+        this.setupSignatureFieldModal();
 
         // Pages sidebar
         this.setupPagesSidebar();
+        
+        // Fields sidebar
+        this.setupFieldsSidebar();
+        
+        // Field Properties sidebar (Edit mode)
+        this.setupFieldPropertiesSidebar();
+        
+        // Listen for field selection to show/hide Field Properties sidebar
+        window.addEventListener('field-properties-show', (e) => {
+            if (this.mode === 'edit' && e.detail?.object && e.detail?.canvas) {
+                this.showFieldPropertiesSidebar(e.detail.object, e.detail.canvas, e.detail.annotationType);
+            }
+        });
+        window.addEventListener('field-properties-hide', () => {
+            this.hideFieldPropertiesSidebar();
+        });
+        
+        // Listen for field updates to refresh sidebar
+        window.addEventListener('field-updated', () => {
+            if (this.mode === 'fill') {
+                this.refreshFieldsSidebar();
+            }
+        });
+        
+        // Listen for signature field fills to refresh sidebar
+        window.addEventListener('signature-field-filled', () => {
+            if (this.mode === 'fill') {
+                this.refreshFieldsSidebar();
+            }
+        });
+        
+        // Listen for form field selection
+        window.addEventListener('form-field-selected', (e) => {
+            if (this.mode === 'fill') {
+                if (e.detail.annotationType === 'signature-field') {
+                    const field = {
+                        type: 'signature-field',
+                        signatureFieldLabel: e.detail.object?._signatureFieldLabel || '',
+                        object: e.detail.object,
+                        pageId: e.detail.pageId
+                    };
+                    this.showSignatureModal({ targetField: field });
+                } else {
+                    this.focusSidebarInputForField(e.detail.object);
+                }
+            }
+        });
     }
 
     setupPagesSidebar() {
@@ -234,6 +295,926 @@ class PDFEditorApp {
         this.pagesExtractBtn?.addEventListener('click', () => this.extractSelectedPages());
         this.pagesSplitBtn?.addEventListener('click', () => this.splitPdfPrompt());
         this.pagesRotateBtn?.addEventListener('click', () => this.rotateSelectedPages());
+    }
+
+    /**
+     * Set up fields sidebar
+     */
+    setupFieldsSidebar() {
+        const closeBtn = document.getElementById('fields-sidebar-close');
+        closeBtn?.addEventListener('click', () => {
+            this.hideFieldsDetail();
+            document.getElementById('fields-sidebar')?.classList.add('hidden');
+        });
+        
+        const backBtn = document.getElementById('fields-back-btn');
+        backBtn?.addEventListener('click', () => {
+            this.hideFieldsDetail();
+        });
+    }
+
+    /**
+     * Set up Field Properties sidebar (Edit mode)
+     */
+    setupFieldPropertiesSidebar() {
+        const closeBtn = document.getElementById('field-properties-close');
+        closeBtn?.addEventListener('click', () => {
+            this.hideFieldPropertiesSidebar();
+        });
+    }
+
+    /**
+     * Show the Field Properties sidebar for a form field
+     */
+    showFieldPropertiesSidebar(fieldObject, canvas, annotationType) {
+        this._editingField = { object: fieldObject, canvas, annotationType };
+        
+        const sidebar = document.getElementById('field-properties-sidebar');
+        const bodyEl = document.getElementById('field-properties-body');
+        if (!sidebar || !bodyEl) return;
+        
+        // Build sidebar content based on field type
+        const fieldName = annotationType === 'signature-field' 
+            ? (fieldObject._signatureFieldLabel || '')
+            : (fieldObject._fieldName || '');
+        const labelText = annotationType === 'signature-field' ? 'Field Label' : 'Field Name';
+        const placeholder = annotationType === 'signature-field' ? 'e.g. Tenant 1, Landlord' : 'e.g. tenant_name';
+        const hintText = annotationType === 'signature-field' ? 'Used to match signers' : 'Used for CSV bulk filling';
+        
+        const isTextBased = ['textfield', 'date', 'dropdown'].includes(annotationType);
+        const currentFontSize = isTextBased ? Math.round((fieldObject._valueFontSize || 12) * this.canvasManager.currentScale) : 12;
+        const fontFamily = fieldObject._fontFamily || 'Arial';
+        
+        let html = `
+            <div class="field-property-group">
+                <label for="field-prop-name">${labelText}</label>
+                <input type="text" id="field-prop-name" value="${this.escapeHtml(fieldName)}" placeholder="${placeholder}">
+                <small id="field-prop-name-hint">${hintText}</small>
+            </div>
+        `;
+        
+        if (isTextBased) {
+            html += `
+                <div class="field-property-group">
+                    <label for="field-prop-font-size">Font Size</label>
+                    <input type="number" id="field-prop-font-size" value="${currentFontSize}" min="8" max="36">
+                </div>
+                <div class="field-property-group">
+                    <label for="field-prop-font-family">Font</label>
+                    <select id="field-prop-font-family">
+                        <option value="Arial" ${fontFamily === 'Arial' ? 'selected' : ''}>Arial</option>
+                        <option value="Times New Roman" ${fontFamily === 'Times New Roman' ? 'selected' : ''}>Times New Roman</option>
+                        <option value="Courier New" ${fontFamily === 'Courier New' ? 'selected' : ''}>Courier New</option>
+                        <option value="Georgia" ${fontFamily === 'Georgia' ? 'selected' : ''}>Georgia</option>
+                    </select>
+                </div>
+            `;
+        }
+        
+        if (annotationType === 'dropdown') {
+            html += `
+                <div class="field-property-group">
+                    <label>Options</label>
+                    <p class="field-properties-hint">Add options that users can select.</p>
+                    <div class="options-list" id="dropdown-options-list"></div>
+                    <div class="add-option-row" style="margin-top: 8px;">
+                        <input type="text" id="new-option-input" placeholder="New option..." class="new-option-input">
+                        <button type="button" id="add-option-btn" class="btn btn-sm btn-primary" title="Add option">
+                            <svg viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>
+                        </button>
+                    </div>
+                    <small class="field-properties-footer-hint" style="margin-top: 4px;">Drag to reorder. Click × to remove.</small>
+                </div>
+            `;
+        }
+        
+        bodyEl.innerHTML = html;
+        
+        // Bind field name
+        const nameInput = document.getElementById('field-prop-name');
+        const nameHint = document.getElementById('field-prop-name-hint');
+        if (nameInput) {
+            nameInput.addEventListener('input', (e) => {
+                this.updateFieldProperty('name', e.target.value.trim());
+            });
+            nameInput.addEventListener('blur', (e) => {
+                const value = e.target.value.trim();
+                const isDup = value && this.canvasManager.isFieldNameDuplicate(value, fieldObject);
+                if (nameHint) {
+                    nameHint.textContent = isDup ? '⚠ This name is already used' : hintText;
+                    nameHint.style.color = isDup ? '#ef4444' : '';
+                }
+                nameInput.style.borderColor = isDup ? '#ef4444' : '';
+            });
+        }
+        
+        // Bind font controls
+        if (isTextBased) {
+            const fontSizeInput = document.getElementById('field-prop-font-size');
+            if (fontSizeInput) {
+                fontSizeInput.addEventListener('change', (e) => {
+                    const val = parseInt(e.target.value);
+                    if (val >= 8 && val <= 36) this.updateFieldProperty('fontSize', val);
+                });
+            }
+            const fontFamilyInput = document.getElementById('field-prop-font-family');
+            if (fontFamilyInput) {
+                fontFamilyInput.addEventListener('change', (e) => {
+                    this.updateFieldProperty('fontFamily', e.target.value);
+                });
+            }
+        }
+        
+        // Bind dropdown options
+        if (annotationType === 'dropdown') {
+            const addBtn = document.getElementById('add-option-btn');
+            const newInput = document.getElementById('new-option-input');
+            addBtn?.addEventListener('click', () => this.addDropdownOption());
+            newInput?.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter') { e.preventDefault(); this.addDropdownOption(); }
+            });
+            this.refreshDropdownOptionsList();
+        }
+        
+        sidebar.classList.remove('hidden');
+    }
+
+    /**
+     * Hide the Field Properties sidebar
+     */
+    hideFieldPropertiesSidebar() {
+        const sidebar = document.getElementById('field-properties-sidebar');
+        sidebar?.classList.add('hidden');
+        this._editingField = null;
+    }
+
+    /**
+     * Update a field property from the sidebar
+     */
+    updateFieldProperty(prop, value) {
+        if (!this._editingField) return;
+        const { object: obj, canvas, annotationType } = this._editingField;
+        
+        if (prop === 'name') {
+            if (annotationType === 'signature-field') {
+                obj._signatureFieldLabel = value;
+                const textObj = obj.getObjects?.()?.[1];
+                if (textObj?.type === 'text') {
+                    textObj.set('text', `${value || 'Signature'}\n(Double-click to sign)`);
+                }
+            } else {
+                obj._fieldName = value;
+                if (annotationType === 'radio') obj._radioGroup = value;
+                const objects = obj.getObjects?.() || [];
+                const minObjects = annotationType === 'dropdown' ? 4 : 3;
+                if (objects.length >= minObjects) {
+                    const labelObj = objects[1];
+                    if (labelObj?.type === 'text') {
+                        let defaultLabel = 'Text Field';
+                        if (annotationType === 'date') defaultLabel = 'Date Field';
+                        if (annotationType === 'dropdown') defaultLabel = 'Dropdown';
+                        labelObj.set('text', value || defaultLabel);
+                    }
+                }
+            }
+        } else if (prop === 'fontSize') {
+            obj._valueFontSize = value / this.canvasManager.currentScale;
+            const objects = obj.getObjects?.() || [];
+            const valueText = objects[2];
+            if (valueText && (valueText.type === 'text' || valueText.type === 'i-text')) {
+                valueText.set('fontSize', value / this.canvasManager.currentScale);
+            }
+        } else if (prop === 'fontFamily') {
+            obj._fontFamily = value;
+            const objects = obj.getObjects?.() || [];
+            const valueText = objects[2];
+            if (valueText && (valueText.type === 'text' || valueText.type === 'i-text')) {
+                valueText.set('fontFamily', value);
+            }
+        }
+        canvas.renderAll();
+    }
+
+    /**
+     * Refresh the dropdown options list in the sidebar
+     */
+    refreshDropdownOptionsList() {
+        const listEl = document.getElementById('dropdown-options-list');
+        if (!listEl || !this._editingField || this._editingField.annotationType !== 'dropdown') return;
+        
+        const options = this._editingField.object._options || [];
+        
+        listEl.innerHTML = '';
+        
+        if (options.length === 0) {
+            listEl.innerHTML = '<div style="color: var(--text-secondary); font-size: 0.8rem; padding: 8px 0;">No options yet. Add one below.</div>';
+            return;
+        }
+        
+        options.forEach((opt, index) => {
+            const item = document.createElement('div');
+            item.className = 'option-item';
+            item.draggable = true;
+            item.dataset.index = index;
+            
+            item.innerHTML = `
+                <span class="option-item-drag" title="Drag to reorder">
+                    <svg viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="M11 18c0 1.1-.9 2-2 2s-2-.9-2-2 .9-2 2-2 2 .9 2 2zm-2-8c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zm0-6c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zm6 4c1.1 0 2-.9 2-2s-.9-2-2-2-2 .9-2 2 .9 2 2 2zm0 2c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zm0 6c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2z"/></svg>
+                </span>
+                <input type="text" class="option-item-text" value="${this.escapeHtml(opt)}" data-index="${index}">
+                <button type="button" class="option-item-remove" title="Remove option" data-index="${index}">
+                    <svg viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+                </button>
+            `;
+            
+            // Edit option text
+            const textInput = item.querySelector('.option-item-text');
+            textInput?.addEventListener('input', (e) => {
+                this.updateDropdownOption(index, e.target.value);
+            });
+            
+            // Remove option
+            const removeBtn = item.querySelector('.option-item-remove');
+            removeBtn?.addEventListener('click', () => {
+                this.removeDropdownOption(index);
+            });
+            
+            // Drag and drop
+            item.addEventListener('dragstart', (e) => {
+                e.dataTransfer.setData('text/plain', index);
+                item.classList.add('dragging');
+            });
+            
+            item.addEventListener('dragend', () => {
+                item.classList.remove('dragging');
+            });
+            
+            item.addEventListener('dragover', (e) => {
+                e.preventDefault();
+            });
+            
+            item.addEventListener('drop', (e) => {
+                e.preventDefault();
+                const fromIndex = parseInt(e.dataTransfer.getData('text/plain'));
+                const toIndex = index;
+                if (fromIndex !== toIndex) {
+                    this.reorderDropdownOptions(fromIndex, toIndex);
+                }
+            });
+            
+            listEl.appendChild(item);
+        });
+    }
+
+    /**
+     * Add a new dropdown option
+     */
+    addDropdownOption() {
+        const input = document.getElementById('new-option-input');
+        if (!input || !this._editingField) return;
+        
+        const value = input.value.trim();
+        if (!value) return;
+        
+        const options = this._editingField.object._options || [];
+        options.push(value);
+        this._editingField.object._options = options;
+        
+        input.value = '';
+        this.refreshDropdownOptionsList();
+        this._editingField.canvas.renderAll();
+        
+        // Focus input for next entry
+        input.focus();
+    }
+
+    /**
+     * Update a dropdown option
+     */
+    updateDropdownOption(index, newValue) {
+        if (!this._editingField) return;
+        
+        const options = this._editingField.object._options || [];
+        if (index >= 0 && index < options.length) {
+            options[index] = newValue;
+            this._editingField.object._options = options;
+            this._editingField.canvas.renderAll();
+        }
+    }
+
+    /**
+     * Remove a dropdown option
+     */
+    removeDropdownOption(index) {
+        if (!this._editingField) return;
+        
+        const options = this._editingField.object._options || [];
+        if (index >= 0 && index < options.length) {
+            options.splice(index, 1);
+            this._editingField.object._options = options;
+            this.refreshDropdownOptionsList();
+            this._editingField.canvas.renderAll();
+        }
+    }
+
+    /**
+     * Reorder dropdown options
+     */
+    reorderDropdownOptions(fromIndex, toIndex) {
+        if (!this._editingField) return;
+        
+        const options = this._editingField.object._options || [];
+        const [moved] = options.splice(fromIndex, 1);
+        options.splice(toIndex, 0, moved);
+        this._editingField.object._options = options;
+        this.refreshDropdownOptionsList();
+        this._editingField.canvas.renderAll();
+    }
+
+    /**
+     * Escape HTML for safe rendering
+     */
+    escapeHtml(text) {
+        const div = document.createElement('div');
+        div.textContent = text || '';
+        return div.innerHTML;
+    }
+
+    /**
+     * Refresh the fields sidebar with current form fields
+     */
+    refreshFieldsSidebar() {
+        const fieldsList = document.getElementById('fields-list');
+        if (!fieldsList) return;
+
+        // Get all form fields from all pages
+        const allFields = [];
+        const annotations = this.canvasManager.getAllAnnotations?.() || [];
+        
+        annotations.forEach((pageData, pageIndex) => {
+            const pageAnnotations = pageData.annotations || [];
+            pageAnnotations.forEach(ann => {
+                if (['textfield', 'checkbox', 'radio', 'dropdown', 'date', 'signature-field'].includes(ann.type)) {
+                    allFields.push({
+                        type: ann.type,
+                        fieldName: ann.data?._fieldName || '',
+                        fieldValue: ann.data?._fieldValue || '',
+                        checked: ann.data?._checked || false,
+                        selectedOption: ann.data?._selectedOption || '',
+                        signatureFieldLabel: ann.data?._signatureFieldLabel || '',
+                        pageNum: pageIndex + 1,
+                        pageId: pageData.pageId,
+                        object: ann.object
+                    });
+                }
+            });
+        });
+
+        // Sort by page, then reading order (top-left to bottom-right)
+        allFields.sort((a, b) => {
+            if (a.pageNum !== b.pageNum) return a.pageNum - b.pageNum;
+            const rectA = a.object?.getBoundingRect?.() ?? { top: 0, left: 0 };
+            const rectB = b.object?.getBoundingRect?.() ?? { top: 0, left: 0 };
+            if (Math.abs(rectA.top - rectB.top) > 8) return rectA.top - rectB.top;
+            return rectA.left - rectB.left;
+        });
+
+        // Render fields
+        fieldsList.innerHTML = '';
+        
+        if (allFields.length === 0) {
+            fieldsList.innerHTML = '<div style="padding: 20px; text-align: center; color: var(--text-secondary);">No form fields found in this document.</div>';
+            return;
+        }
+
+        allFields.forEach((field, index) => {
+            const fieldItem = document.createElement('div');
+            fieldItem.className = 'field-item';
+            fieldItem.dataset.fieldIndex = index;
+            fieldItem.dataset.pageId = field.pageId;
+            
+            const label = field.fieldName || field.signatureFieldLabel || `${field.type} ${index + 1}`;
+            
+            // Create header
+            const header = document.createElement('div');
+            header.className = 'field-item-header';
+            header.innerHTML = `
+                <span class="field-item-label">${escapeHtml(label)}</span>
+                <span class="field-item-actions">
+                    <button type="button" class="field-configure-btn" title="Configure field" data-field-index="${index}">⚙</button>
+                    <span class="field-item-type">${escapeHtml(field.type)}</span>
+                </span>
+            `;
+            fieldItem.appendChild(header);
+            
+            // Configure button - store field reference for the click handler
+            const configBtn = header.querySelector('.field-configure-btn');
+            if (configBtn) {
+                configBtn.addEventListener('click', (e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    this.showFieldsDetail(field);
+                });
+            }
+            
+            // Create editable input based on field type
+            const inputContainer = document.createElement('div');
+            inputContainer.className = 'field-item-input';
+            
+            if (field.type === 'textfield' || field.type === 'date') {
+                const input = document.createElement('input');
+                input.type = field.type === 'date' ? 'date' : 'text';
+                input.className = 'field-sidebar-input';
+                input.placeholder = field.type === 'date' ? 'YYYY-MM-DD' : 'Enter value...';
+                input.value = field.fieldValue || '';
+                input.dataset.fieldIndex = index;
+                
+                input.addEventListener('input', (e) => {
+                    this.updateFieldValue(field, e.target.value);
+                });
+                input.addEventListener('focus', () => {
+                    this.navigateToField(field);
+                    // Don't call highlightFieldOnCanvas - it can interfere with typing
+                });
+                
+                inputContainer.appendChild(input);
+            } else if (field.type === 'checkbox') {
+                const checkbox = document.createElement('input');
+                checkbox.type = 'checkbox';
+                checkbox.className = 'field-sidebar-checkbox';
+                checkbox.checked = field.checked || false;
+                checkbox.dataset.fieldIndex = index;
+                
+                checkbox.addEventListener('change', (e) => {
+                    this.updateFieldChecked(field, e.target.checked);
+                });
+                checkbox.addEventListener('focus', () => {
+                    this.navigateToField(field);
+                });
+                
+                const checkLabel = document.createElement('label');
+                checkLabel.textContent = field.checked ? 'Checked' : 'Unchecked';
+                checkLabel.style.marginLeft = '8px';
+                checkLabel.style.color = 'var(--text-secondary)';
+                
+                inputContainer.appendChild(checkbox);
+                inputContainer.appendChild(checkLabel);
+            } else if (field.type === 'radio') {
+                const radio = document.createElement('input');
+                radio.type = 'checkbox'; // Use checkbox to allow toggle
+                radio.className = 'field-sidebar-checkbox';
+                radio.checked = field.checked || false;
+                radio.dataset.fieldIndex = index;
+                
+                radio.addEventListener('change', (e) => {
+                    this.updateFieldChecked(field, e.target.checked);
+                });
+                radio.addEventListener('focus', () => {
+                    this.navigateToField(field);
+                });
+                
+                const radioLabel = document.createElement('label');
+                radioLabel.textContent = field.checked ? 'Selected' : 'Not selected';
+                radioLabel.style.marginLeft = '8px';
+                radioLabel.style.color = 'var(--text-secondary)';
+                
+                inputContainer.appendChild(radio);
+                inputContainer.appendChild(radioLabel);
+            } else if (field.type === 'dropdown') {
+                const select = document.createElement('select');
+                select.className = 'field-sidebar-select';
+                select.dataset.fieldIndex = index;
+                
+                // Add empty option
+                const emptyOpt = document.createElement('option');
+                emptyOpt.value = '';
+                emptyOpt.textContent = 'Select...';
+                select.appendChild(emptyOpt);
+                
+                // Add options from field
+                const options = field.object?._options || [];
+                options.forEach(opt => {
+                    const option = document.createElement('option');
+                    option.value = opt;
+                    option.textContent = opt;
+                    if (opt === field.selectedOption) option.selected = true;
+                    select.appendChild(option);
+                });
+                
+                select.addEventListener('change', (e) => {
+                    this.updateFieldDropdown(field, e.target.value);
+                });
+                select.addEventListener('focus', () => {
+                    this.navigateToField(field);
+                });
+                
+                inputContainer.appendChild(select);
+            } else if (field.type === 'signature-field') {
+                const signBtn = document.createElement('button');
+                signBtn.className = 'field-sidebar-sign-btn';
+                signBtn.textContent = 'Click to Sign';
+                signBtn.dataset.fieldIndex = index;
+                
+                signBtn.addEventListener('click', () => {
+                    this.navigateToField(field);
+                    this.highlightFieldOnCanvas(field);
+                    this.showSignatureModal({ targetField: field });
+                });
+                
+                inputContainer.appendChild(signBtn);
+            }
+            
+            fieldItem.appendChild(inputContainer);
+            
+            // Page info
+            const pageInfo = document.createElement('div');
+            pageInfo.className = 'field-item-page';
+            pageInfo.textContent = `Page ${field.pageNum}`;
+            fieldItem.appendChild(pageInfo);
+            
+            fieldsList.appendChild(fieldItem);
+        });
+    }
+
+    /**
+     * Update a text/date field value from sidebar
+     */
+    updateFieldValue(field, value) {
+        if (!field.object) return;
+        
+        field.object._fieldValue = value;
+        
+        // Update visual text on canvas
+        const objects = field.object.getObjects?.() || [];
+        if (objects.length >= 3) {
+            const valueText = objects[2];
+            const isDate = field.type === 'date';
+            const placeholder = isDate ? 'YYYY-MM-DD' : 'Click to fill';
+            valueText.set({
+                text: value || placeholder,
+                fill: value ? '#000000' : '#9ca3af',
+                fontStyle: value ? 'normal' : 'italic'
+            });
+        }
+        
+        const canvas = this.canvasManager.canvases.get(field.pageId);
+        if (canvas) canvas.renderAll();
+    }
+
+    /**
+     * Update a checkbox/radio field from sidebar
+     */
+    updateFieldChecked(field, checked) {
+        if (!field.object) return;
+        
+        const canvas = this.canvasManager.canvases.get(field.pageId);
+        if (!canvas) return;
+        
+        if (field.type === 'checkbox') {
+            this.canvasManager.toggleCheckbox(field.object, canvas);
+        } else if (field.type === 'radio') {
+            this.canvasManager.toggleRadio(field.object, canvas);
+        }
+        
+        // Refresh to update sidebar
+        setTimeout(() => this.refreshFieldsSidebar(), 50);
+    }
+
+    /**
+     * Update a dropdown field from sidebar
+     */
+    updateFieldDropdown(field, value) {
+        if (!field.object) return;
+        
+        field.object._selectedOption = value;
+        
+        // Update visual text on canvas
+        const objects = field.object.getObjects?.() || [];
+        const hasNewStructure = objects.length >= 4;
+        const valueText = hasNewStructure ? objects[2] : objects[1];
+        
+        if (valueText) {
+            valueText.set({
+                text: value || 'Select...',
+                fill: value ? '#000000' : '#9ca3af',
+                fontStyle: value ? 'normal' : 'italic'
+            });
+        }
+        
+        const canvas = this.canvasManager.canvases.get(field.pageId);
+        if (canvas) canvas.renderAll();
+    }
+
+    /**
+     * Highlight a field on the canvas and show font controls
+     */
+    highlightFieldOnCanvas(field) {
+        if (!field.object) return;
+        
+        const canvas = this.canvasManager.canvases.get(field.pageId);
+        if (canvas) {
+            canvas.setActiveObject(field.object);
+            canvas.renderAll();
+            // Trigger selection change to update Field Properties sidebar
+            this.canvasManager.onSelectionChanged(canvas);
+        }
+    }
+
+    /**
+     * Focus the sidebar input for a selected field object
+     */
+    focusSidebarInputForField(fieldObject) {
+        const fieldsList = document.getElementById('fields-list');
+        if (!fieldsList) return;
+        
+        // Find the field item that corresponds to this object
+        const inputs = fieldsList.querySelectorAll('.field-sidebar-input, .field-sidebar-checkbox, .field-sidebar-select, .field-sidebar-sign-btn');
+        
+        for (const input of inputs) {
+            const fieldItem = input.closest('.field-item');
+            if (!fieldItem) continue;
+            
+            const index = parseInt(fieldItem.dataset.fieldIndex);
+            
+            // Get field data to compare
+            const annotations = this.canvasManager.getAllAnnotations?.() || [];
+            let fieldIndex = 0;
+            
+            for (const pageData of annotations) {
+                for (const ann of pageData.annotations || []) {
+                    if (['textfield', 'checkbox', 'radio', 'dropdown', 'date', 'signature-field'].includes(ann.type)) {
+                        if (ann.object === fieldObject) {
+                            // Found the matching field - focus its input
+                            input.focus();
+                            input.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+                            return;
+                        }
+                        fieldIndex++;
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * Show field configuration detail view in the sidebar
+     */
+    showFieldsDetail(field) {
+        this._sidebarConfigField = field;
+        const listWrap = document.getElementById('fields-list-wrap');
+        const detailWrap = document.getElementById('fields-detail-wrap');
+        const titleEl = document.getElementById('fields-sidebar-title');
+        const hintEl = document.getElementById('fields-sidebar-hint');
+        
+        if (!listWrap || !detailWrap) return;
+        
+        listWrap.classList.add('hidden');
+        detailWrap.classList.remove('hidden');
+        if (titleEl) titleEl.textContent = 'Configure Field';
+        if (hintEl) hintEl.textContent = '';
+        
+        const label = field.fieldName || field.signatureFieldLabel || field.type;
+        const isTextBased = ['textfield', 'date', 'dropdown'].includes(field.type);
+        const fieldName = field.type === 'signature-field' ? (field.signatureFieldLabel || '') : (field.fieldName || '');
+        const currentFontSize = isTextBased ? Math.round((field.object?._valueFontSize || 12) * this.canvasManager.currentScale) : 12;
+        const fontFamily = field.object?._fontFamily || 'Arial';
+        
+        const isFillMode = this.mode === 'fill';
+        const nameReadonly = isFillMode ? ' readonly' : '';
+        let html = `
+            <div class="field-property-group">
+                <label>${field.type === 'signature-field' ? 'Field Label' : 'Field Name'}</label>
+                <input type="text" id="fields-detail-name" value="${this.escapeHtml(fieldName)}"${nameReadonly} class="${isFillMode ? 'readonly' : ''}">
+                ${isFillMode ? '<small class="field-properties-hint">Field name cannot be changed in Fill mode.</small>' : ''}
+            </div>
+        `;
+        
+        if (isTextBased) {
+            html += `
+                <div class="field-property-group">
+                    <label>Font Size</label>
+                    <input type="number" id="fields-detail-font-size" value="${currentFontSize}" min="8" max="36">
+                </div>
+                <div class="field-property-group">
+                    <label>Font</label>
+                    <select id="fields-detail-font-family">
+                        <option value="Arial" ${fontFamily === 'Arial' ? 'selected' : ''}>Arial</option>
+                        <option value="Times New Roman" ${fontFamily === 'Times New Roman' ? 'selected' : ''}>Times New Roman</option>
+                        <option value="Courier New" ${fontFamily === 'Courier New' ? 'selected' : ''}>Courier New</option>
+                        <option value="Georgia" ${fontFamily === 'Georgia' ? 'selected' : ''}>Georgia</option>
+                    </select>
+                </div>
+            `;
+        }
+        
+        if (field.type === 'dropdown' && !isFillMode) {
+            const options = field.object?._options || [];
+            html += `
+                <div class="field-property-group">
+                    <label>Options</label>
+                    <p class="field-properties-hint">Add options that users can select.</p>
+                    <div class="options-list" id="fields-detail-options-list"></div>
+                    <div class="add-option-row" style="margin-top: 8px;">
+                        <input type="text" id="fields-detail-new-option" placeholder="New option..." class="new-option-input">
+                        <button type="button" id="fields-detail-add-option" class="btn btn-sm btn-primary" title="Add option">+</button>
+                    </div>
+                </div>
+            `;
+        } else if (field.type === 'dropdown' && isFillMode) {
+            const options = field.object?._options || [];
+            html += `
+                <div class="field-property-group">
+                    <label>Options</label>
+                    <p class="field-properties-hint">Options cannot be changed in Fill mode.</p>
+                    <div class="options-list" id="fields-detail-options-list"></div>
+                </div>
+            `;
+        }
+        
+        document.getElementById('fields-detail-body').innerHTML = html;
+        
+        // Bind name (only when not read-only)
+        const nameInput = document.getElementById('fields-detail-name');
+        if (nameInput && !isFillMode) {
+            nameInput.addEventListener('input', () => {
+                this._applySidebarConfigToField('name', nameInput.value.trim());
+            });
+        }
+        
+        // Bind font controls
+        if (isTextBased) {
+            const fontSizeInput = document.getElementById('fields-detail-font-size');
+            if (fontSizeInput) {
+                fontSizeInput.addEventListener('change', () => {
+                    const val = parseInt(fontSizeInput.value);
+                    if (val >= 8 && val <= 36) this._applySidebarConfigToField('fontSize', val);
+                });
+            }
+            const fontFamilyInput = document.getElementById('fields-detail-font-family');
+            if (fontFamilyInput) {
+                fontFamilyInput.addEventListener('change', () => {
+                    this._applySidebarConfigToField('fontFamily', fontFamilyInput.value);
+                });
+            }
+        }
+        
+        // Bind dropdown options (only in Edit mode)
+        if (field.type === 'dropdown') {
+            this._refreshFieldsDetailOptions(field);
+            if (!isFillMode) {
+            document.getElementById('fields-detail-add-option')?.addEventListener('click', () => {
+                const input = document.getElementById('fields-detail-new-option');
+                const val = input?.value?.trim();
+                if (val && field.object) {
+                    field.object._options = field.object._options || [];
+                    field.object._options.push(val);
+                    input.value = '';
+                    this._refreshFieldsDetailOptions(field);
+                    this.canvasManager.canvases.get(field.pageId)?.renderAll();
+                }
+            });
+            document.getElementById('fields-detail-new-option')?.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter') {
+                    e.preventDefault();
+                    document.getElementById('fields-detail-add-option')?.click();
+                }
+            });
+            }
+        }
+    }
+
+    _applySidebarConfigToField(prop, value) {
+        const field = this._sidebarConfigField;
+        if (!field?.object) return;
+        const canvas = this.canvasManager.canvases.get(field.pageId);
+        if (!canvas) return;
+        
+        if (prop === 'name') {
+            if (field.type === 'signature-field') {
+                field.object._signatureFieldLabel = value;
+                const textObj = field.object.getObjects?.()?.[1];
+                if (textObj?.type === 'text') {
+                    textObj.set('text', `${value || 'Signature'}\n(Double-click to sign)`);
+                }
+            } else {
+                field.object._fieldName = value;
+                if (field.type === 'radio') field.object._radioGroup = value;
+                const objects = field.object.getObjects?.() || [];
+                const minObjects = field.type === 'dropdown' ? 4 : 3;
+                if (objects.length >= minObjects) {
+                    const labelObj = objects[1];
+                    if (labelObj?.type === 'text') {
+                        labelObj.set('text', value || (field.type === 'date' ? 'Date Field' : field.type === 'dropdown' ? 'Dropdown' : 'Text Field'));
+                    }
+                }
+            }
+        } else if (prop === 'fontSize') {
+            field.object._valueFontSize = value / this.canvasManager.currentScale;
+            const objects = field.object.getObjects?.() || [];
+            const valueText = objects[2];
+            if (valueText && (valueText.type === 'text' || valueText.type === 'i-text')) {
+                valueText.set('fontSize', value / this.canvasManager.currentScale);
+            }
+        } else if (prop === 'fontFamily') {
+            field.object._fontFamily = value;
+            const objects = field.object.getObjects?.() || [];
+            const valueText = objects[2];
+            if (valueText && (valueText.type === 'text' || valueText.type === 'i-text')) {
+                valueText.set('fontFamily', value);
+            }
+        }
+        canvas.renderAll();
+        this.refreshFieldsSidebar();
+    }
+
+    _refreshFieldsDetailOptions(field) {
+        const listEl = document.getElementById('fields-detail-options-list');
+        if (!listEl || field.type !== 'dropdown') return;
+        const options = field.object?._options || [];
+        const isFillMode = this.mode === 'fill';
+        listEl.innerHTML = options.map((opt, i) => `
+            <div class="option-item">
+                ${!isFillMode ? '<span class="option-item-drag">⋮⋮</span>' : ''}
+                <span>${this.escapeHtml(opt)}</span>
+                ${!isFillMode ? `<button type="button" class="option-item-remove" data-index="${i}">×</button>` : ''}
+            </div>
+        `).join('');
+        if (!isFillMode) {
+            listEl.querySelectorAll('.option-item-remove').forEach(btn => {
+                btn.addEventListener('click', () => {
+                    const i = parseInt(btn.dataset.index);
+                    field.object._options.splice(i, 1);
+                    this._refreshFieldsDetailOptions(field);
+                    this.canvasManager.canvases.get(field.pageId)?.renderAll();
+                });
+            });
+        }
+    }
+
+    /**
+     * Hide field config detail and return to list view
+     */
+    hideFieldsDetail() {
+        this._sidebarConfigField = null;
+        const listWrap = document.getElementById('fields-list-wrap');
+        const detailWrap = document.getElementById('fields-detail-wrap');
+        const titleEl = document.getElementById('fields-sidebar-title');
+        const hintEl = document.getElementById('fields-sidebar-hint');
+        
+        if (listWrap) listWrap.classList.remove('hidden');
+        if (detailWrap) detailWrap.classList.add('hidden');
+        if (titleEl) titleEl.textContent = 'Form Fields';
+        if (hintEl) hintEl.textContent = 'Use the inputs above to fill fields. Tab to move between fields. Click a field on the document to select it.';
+        
+        this.refreshFieldsSidebar();
+    }
+
+    /**
+     * Navigate to a field in the document
+     */
+    navigateToField(field) {
+        // Go to the field's page
+        this.goToPage(field.pageNum);
+        
+        // Highlight the field (optional - could add visual feedback)
+        // For now, just ensure the page is visible
+    }
+
+    /**
+     * Edit a field from the sidebar
+     */
+    editFieldFromSidebar(field) {
+        // Navigate to the field first
+        this.navigateToField(field);
+        
+        // Find the actual field object on the canvas and trigger its edit handler
+        const canvas = this.canvasManager.canvases.get(field.pageId);
+        if (!canvas) return;
+        
+        const objects = canvas.getObjects();
+        const fieldObj = objects.find(obj => {
+            return obj._annotationType === field.type && 
+                   (obj._fieldName === field.fieldName || obj._signatureFieldLabel === field.signatureFieldLabel);
+        });
+        
+        if (fieldObj) {
+            // Trigger the appropriate interaction based on field type
+            if (field.type === 'textfield' || field.type === 'date') {
+                this.canvasManager.editTextField(fieldObj, canvas);
+            } else if (field.type === 'checkbox') {
+                this.canvasManager.toggleCheckbox(fieldObj, canvas);
+            } else if (field.type === 'radio') {
+                this.canvasManager.toggleRadio(fieldObj, canvas);
+            } else if (field.type === 'dropdown') {
+                this.canvasManager.selectDropdownValue(fieldObj, canvas);
+            } else if (field.type === 'signature-field') {
+                // Open signature modal for this specific field
+                this.showSignatureModal({ targetField: field });
+            }
+            
+            // Refresh sidebar after edit
+            setTimeout(() => this.refreshFieldsSidebar(), 100);
+        }
     }
 
     /**
@@ -433,6 +1414,13 @@ class PDFEditorApp {
                 console.warn('Could not read PDF metadata for signing flow:', e);
             }
 
+            // Auto-detect mode: if signing metadata present, default to Fill mode
+            if (this.signingFlowMeta) {
+                this.switchMode('fill');
+            } else {
+                this.switchMode('edit');
+            }
+
             // Update UI
             this.welcomeScreen.classList.add('hidden');
             this.pdfContainer.classList.remove('hidden');
@@ -457,8 +1445,19 @@ class PDFEditorApp {
     selectTool(btn) {
         const tool = btn.dataset.tool;
 
-        // Handle signature tool specially
-        if (tool === 'signature') {
+        // Handle signature field tool (for placing empty signature boxes when editing)
+        // Place directly like other form fields; edit name in Field Properties sidebar
+        if (tool === 'signature-field') {
+            this.canvasManager.setTool(tool);
+            this.toolButtons.forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            this.applyToolCursor(tool);
+            this.showToolHint('Click on the document where you want to place the signature field');
+            return;
+        }
+
+        // Handle sign tool (for actually signing the document)
+        if (tool === 'sign' || tool === 'signature') {
             this.showSignatureModal();
             return;
         }
@@ -487,6 +1486,83 @@ class PDFEditorApp {
         const btn = document.querySelector(`[data-tool="${toolName}"]`);
         if (btn) {
             this.selectTool(btn);
+        }
+    }
+
+    /**
+     * Switch between Edit and Fill modes
+     */
+    switchMode(newMode) {
+        if (this.mode === newMode) return;
+
+        // Warn if switching from Fill to Edit with active signing flow
+        if (newMode === 'edit' && this.mode === 'fill' && this.signingFlowMeta) {
+            const ok = confirm(
+                'Switching to Edit Mode may modify the document structure and disrupt the signing flow.\n\n' +
+                'In Edit Mode, you can add/remove fields, rearrange pages, and make structural changes that could invalidate signatures.\n\n' +
+                'Continue to Edit Mode?'
+            );
+            if (!ok) return;
+        }
+
+        this.mode = newMode;
+        
+        // Update mode toggle buttons
+        document.getElementById('mode-edit')?.classList.toggle('active', newMode === 'edit');
+        document.getElementById('mode-fill')?.classList.toggle('active', newMode === 'fill');
+        
+        // Update canvas manager fill mode
+        this.canvasManager.setFillMode(newMode === 'fill');
+        
+        // Update toolbar tools visibility
+        this.updateToolsForMode();
+        
+        // Show/hide sidebars and hint
+        const fieldsSidebar = document.getElementById('fields-sidebar');
+        if (newMode === 'fill') {
+            this.hideFieldPropertiesSidebar();
+            fieldsSidebar?.classList.remove('hidden');
+            this.refreshFieldsSidebar();
+            // Show helpful hint for Fill mode
+            this.showToolHint('Use the sidebar to fill in fields. Click a field on the document to select it.');
+        } else {
+            this.hideToolHint();
+            fieldsSidebar?.classList.add('hidden');
+        }
+        
+        // Switch to select tool
+        this.selectToolByName('select');
+    }
+
+    /**
+     * Show/hide tools based on current mode
+     */
+    updateToolsForMode() {
+        const editOnlyTools = [
+            'text', 'whiteout', 'draw', 'eraser',
+            'signature-field', 'textfield', 'checkbox', 'radio', 'dropdown', 'date',
+            'highlight', 'underline', 'strike', 'rect', 'ellipse', 'arrow', 'note', 'stamp', 'image'
+        ];
+        
+        const fillModeTools = ['select', 'sign'];
+
+        if (this.mode === 'fill') {
+            // In Fill mode: hide edit-only tools
+            editOnlyTools.forEach(tool => {
+                const btn = document.querySelector(`[data-tool="${tool}"]`);
+                if (btn) btn.style.display = 'none';
+            });
+            // Show fill mode tools
+            fillModeTools.forEach(tool => {
+                const btn = document.querySelector(`[data-tool="${tool}"]`);
+                if (btn) btn.style.display = '';
+            });
+        } else {
+            // In Edit mode: show all tools
+            [...editOnlyTools, ...fillModeTools].forEach(tool => {
+                const btn = document.querySelector(`[data-tool="${tool}"]`);
+                if (btn) btn.style.display = '';
+            });
         }
     }
 
@@ -1376,6 +2452,114 @@ class PDFEditorApp {
     }
 
     /**
+     * Set up signature field modal (for placing empty signature boxes when editing)
+     */
+    setupSignatureFieldModal() {
+        const modal = document.getElementById('signature-field-modal');
+        const closeBtn = document.getElementById('signature-field-modal-close');
+        const cancelBtn = document.getElementById('sig-field-cancel');
+        const addBtn = document.getElementById('sig-field-add');
+        const labelInput = document.getElementById('sig-field-label');
+
+        if (!modal || !closeBtn || !cancelBtn || !addBtn || !labelInput) return;
+
+        const updateAddState = () => {
+            const label = (labelInput.value || '').trim();
+            addBtn.disabled = !label;
+        };
+
+        // Close modal
+        closeBtn.addEventListener('click', () => this.hideSignatureFieldModal());
+        cancelBtn.addEventListener('click', () => this.hideSignatureFieldModal());
+
+        // Update Add button state when label changes
+        labelInput.addEventListener('input', updateAddState);
+
+        // Add field button
+        addBtn.addEventListener('click', () => {
+            const label = (labelInput.value || '').trim();
+            if (!label) return;
+
+            // Set the signature field label and switch to signature-field tool
+            this.canvasManager.setSignatureFieldLabel(label);
+            this.canvasManager.setTool('signature-field');
+            this.toolButtons.forEach(b => b.classList.remove('active'));
+            document.querySelector('[data-tool="signature-field"]')?.classList.add('active');
+            this.hideSignatureFieldModal();
+            
+            // Show hint banner and apply cursor
+            this.showToolHint('Click on the document where you want to place the signature field');
+            this.applyToolCursor('signature-field');
+        });
+
+        // Close on outside click
+        modal.addEventListener('click', (e) => {
+            if (e.target === modal) this.hideSignatureFieldModal();
+        });
+    }
+
+    /**
+     * Show signature field modal
+     */
+    showSignatureFieldModal() {
+        const modal = document.getElementById('signature-field-modal');
+        const labelInput = document.getElementById('sig-field-label');
+        const addBtn = document.getElementById('sig-field-add');
+        if (!modal || !labelInput || !addBtn) return;
+
+        labelInput.value = '';
+        addBtn.disabled = true;
+        modal.classList.remove('hidden');
+        labelInput.focus();
+    }
+
+    /**
+     * Hide signature field modal
+     */
+    hideSignatureFieldModal() {
+        const modal = document.getElementById('signature-field-modal');
+        if (modal) modal.classList.add('hidden');
+    }
+
+    /**
+     * Show tool hint banner with message
+     */
+    showToolHint(message) {
+        const banner = document.getElementById('tool-hint-banner');
+        const text = document.getElementById('tool-hint-banner-text');
+        if (!banner || !text) return;
+        
+        text.textContent = message;
+        banner.classList.remove('hidden');
+    }
+
+    /**
+     * Hide tool hint banner
+     */
+    hideToolHint() {
+        const banner = document.getElementById('tool-hint-banner');
+        if (banner) banner.classList.add('hidden');
+    }
+
+    /**
+     * Apply tool-specific cursor to canvas containers
+     */
+    applyToolCursor(tool) {
+        const containers = document.querySelectorAll('.canvas-container');
+        containers.forEach(container => {
+            // Remove all tool cursor classes
+            container.classList.remove('text-mode', 'signature-field-mode');
+            
+            // Add specific cursor class
+            if (tool === 'text') {
+                container.classList.add('text-mode');
+            } else if (tool === 'signature-field') {
+                container.classList.add('signature-field-mode');
+            }
+        });
+    }
+
+    /**
      * Update Insert Signature button enabled state based on form validity
      */
     updateSignatureApplyState() {
@@ -1407,22 +2591,25 @@ class PDFEditorApp {
         const intentCheck = document.getElementById('sig-intent');
         const consentCheck = document.getElementById('sig-consent');
         const nameInput = document.getElementById('sig-name');
+        const printedNameInput = document.getElementById('sig-printed-name');
         const emailInput = document.getElementById('sig-email');
         const applyBtn = document.getElementById('sig-apply');
         if (!intentCheck || !consentCheck || !nameInput || !applyBtn) return false;
 
         const intent = intentCheck.checked;
         const consent = consentCheck.checked;
-        const name = (nameInput.value || '').trim();
+        const fieldLabel = (nameInput.value || '').trim();  // Which signature field (slot)
+        const printedName = (printedNameInput?.value || '').trim();  // Signer's legal name for audit
         const email = (emailInput?.value || '').trim();
         const dataUrl = this._selectedSavedSig
             ? this._selectedSavedSig.dataUrl
             : (this._activeSignatureTab() === 'image' ? this._pendingSignatureImage : this.signaturePad.getDataUrl());
 
-        if (!intent || !consent || !name || !dataUrl) return false;
+        if (!intent || !consent || !fieldLabel || !dataUrl) return false;
 
+        // signerName = printed name for audit trail; fallback to field label if not provided
         const meta = {
-            signerName: name,
+            signerName: printedName || fieldLabel,
             signerEmail: email || undefined,
             intentAccepted: intent,
             consentAccepted: consent,
@@ -1431,6 +2618,30 @@ class PDFEditorApp {
         };
 
         this.canvasManager.setSignature(dataUrl, meta);
+        
+        // In Fill mode: fill signature field(s)
+        if (this.mode === 'fill') {
+            if (this._targetSignatureField?.object) {
+                // We have a specific field to fill
+                const canvas = this.canvasManager.canvases.get(this._targetSignatureField.pageId);
+                if (canvas) {
+                    this.canvasManager.replaceSignatureField(this._targetSignatureField.object, canvas);
+                    this._targetSignatureField = null;
+                    this.refreshFieldsSidebar();
+                    return true;
+                }
+            }
+            const filled = this.fillMatchingSignatureFields(fieldLabel, email);
+            if (filled > 0) {
+                this.refreshFieldsSidebar();
+                return true;
+            } else {
+                alert('No matching signature field found for this signer. Please ensure the document has a signature field with your name or contact the sender.');
+                return false;
+            }
+        }
+        
+        // In Edit mode: set tool to place signature manually
         this.canvasManager.setTool('signature');
         this.toolButtons.forEach(b => b.classList.remove('active'));
         document.querySelector('[data-tool="signature"]')?.classList.add('active');
@@ -1438,9 +2649,71 @@ class PDFEditorApp {
     }
 
     /**
-     * Show signature modal
+     * Find and fill signature fields that match the field label and optional email
+     * @param {string} fieldLabelToMatch - Signature field label (slot identifier) to match
+     * @param {string} signerEmail - Email of the signer (optional, for expected-signer matching)
+     * @returns {number} Number of signature fields filled
      */
-    showSignatureModal() {
+    fillMatchingSignatureFields(fieldLabelToMatch, signerEmail) {
+        let filledCount = 0;
+        
+        // Get all signature fields from all canvases
+        this.canvasManager.canvases.forEach((canvas, pageId) => {
+            const objects = canvas.getObjects();
+            objects.forEach(obj => {
+                if (obj._annotationType === 'signature-field') {
+                    const fieldLabel = obj._signatureFieldLabel || '';
+                    
+                    // Match by field label (exact or partial)
+                    const matchesFieldLabel = fieldLabel.toLowerCase().includes(fieldLabelToMatch.toLowerCase()) ||
+                                             fieldLabelToMatch.toLowerCase().includes(fieldLabel.toLowerCase());
+                    const matchesEmail = signerEmail && fieldLabel.toLowerCase().includes(signerEmail.toLowerCase());
+                    
+                    // Also check if this field matches expected signers (by field label / email)
+                    const matchesExpected = this.signatureFieldMatchesExpectedSigner(fieldLabel, fieldLabelToMatch, signerEmail);
+                    
+                    if (matchesFieldLabel || matchesEmail || matchesExpected) {
+                        this.canvasManager.replaceSignatureField(obj, canvas);
+                        filledCount++;
+                    }
+                }
+            });
+        });
+        
+        return filledCount;
+    }
+
+    /**
+     * Check if a signature field matches an expected signer from metadata
+     */
+    signatureFieldMatchesExpectedSigner(fieldLabel, signerName, signerEmail) {
+        if (!this.signingFlowMeta || !this.signingFlowMeta.expectedSigners) return false;
+        
+        const expectedSigners = this.signingFlowMeta.expectedSigners || [];
+        
+        // Find a matching expected signer
+        const matchingSigner = expectedSigners.find(signer => {
+            const nameMatches = signer.name && (
+                signer.name.toLowerCase() === signerName.toLowerCase() ||
+                fieldLabel.toLowerCase().includes(signer.name.toLowerCase())
+            );
+            const emailMatches = signerEmail && signer.email && 
+                                signer.email.toLowerCase() === signerEmail.toLowerCase();
+            
+            return nameMatches || emailMatches;
+        });
+        
+        return !!matchingSigner;
+    }
+
+    /**
+     * Show signature modal
+     * @param {Object} [options]
+     * @param {Object} [options.targetField] - When signing a specific field, pass it. Name will be field ID (read-only), email pre-filled if known.
+     */
+    showSignatureModal(options = {}) {
+        const { targetField } = options;
+        this._targetSignatureField = targetField || null;
         this._pendingSignatureImage = null;
         this._selectedSavedSig = null;
         this._clearImagePreview();
@@ -1448,6 +2721,12 @@ class PDFEditorApp {
         this.signatureModal.classList.remove('hidden');
         this.signaturePad.clear();
         this.signaturePad.setTypedText('');
+        // Resize canvas to match display after modal is laid out (fixes coordinate offset)
+        requestAnimationFrame(() => {
+            requestAnimationFrame(() => {
+                this.signaturePad.resize();
+            });
+        });
         const textInput = document.getElementById('sig-text-input');
         if (textInput) textInput.value = '';
         const preview = document.getElementById('sig-preview');
@@ -1464,17 +2743,114 @@ class PDFEditorApp {
         const intentCheck = document.getElementById('sig-intent');
         const consentCheck = document.getElementById('sig-consent');
         const nameInput = document.getElementById('sig-name');
+        const nameLabel = document.querySelector('label[for="sig-name"]');
+        const nameHint = nameInput?.closest('.sig-field')?.querySelector('.sig-field-hint');
+        const printedNameInput = document.getElementById('sig-printed-name');
         const emailInput = document.getElementById('sig-email');
         const applyBtn = document.getElementById('sig-apply');
         if (intentCheck) intentCheck.checked = false;
         if (consentCheck) consentCheck.checked = false;
-        if (nameInput) nameInput.value = '';
-        if (emailInput) emailInput.value = '';
+        if (printedNameInput) printedNameInput.value = '';
         if (applyBtn) applyBtn.disabled = true;
+
+        if (targetField) {
+            // Signing a specific field: field ID read-only, printed name optional
+            const fieldLabel = targetField.signatureFieldLabel || targetField.object?._signatureFieldLabel || '';
+            if (nameInput) {
+                nameInput.value = fieldLabel;
+                nameInput.readOnly = true;
+                nameInput.classList.add('readonly');
+            }
+            if (nameLabel) nameLabel.textContent = 'Signature field';
+            if (nameHint) nameHint.textContent = 'This field will receive your signature.';
+            if (printedNameInput) {
+                printedNameInput.placeholder = 'e.g. John Doe';
+                printedNameInput.disabled = false;
+            }
+            const signerInfo = this.detectCurrentSignerForField(targetField);
+            if (emailInput) {
+                emailInput.value = signerInfo.email || '';
+                emailInput.readOnly = !!signerInfo.email;
+                emailInput.classList.toggle('readonly', !!signerInfo.email);
+            }
+        } else {
+            // General sign: user enters field label for matching, printed name optional
+            if (nameInput) {
+                nameInput.value = '';
+                nameInput.readOnly = false;
+                nameInput.classList.remove('readonly');
+            }
+            if (nameLabel) nameLabel.innerHTML = 'Signature field <span class="required">*</span>';
+            if (nameHint) nameHint.textContent = 'Identifies which signature slot. Must match the field label on the document.';
+            if (printedNameInput) {
+                printedNameInput.placeholder = 'e.g. John Doe';
+                printedNameInput.disabled = false;
+            }
+            if (emailInput) {
+                emailInput.readOnly = false;
+                emailInput.classList.remove('readonly');
+                emailInput.value = '';
+            }
+            if (this.mode === 'fill') {
+                const signerInfo = this.detectCurrentSigner();
+                if (signerInfo.fieldLabel && nameInput) nameInput.value = signerInfo.fieldLabel;
+                if (signerInfo.email && emailInput) emailInput.value = signerInfo.email;
+            }
+        }
 
         this._refreshSignatureModalExtras();
         this.updateSignatureApplyState();
         this.updateHistoryButtons();
+    }
+
+    /**
+     * Get signer email for a specific field (from URL params or signing flow metadata)
+     */
+    detectCurrentSignerForField(field) {
+        const urlParams = new URLSearchParams(window.location.search);
+        const urlEmail = urlParams.get('email');
+        if (urlEmail) return { email: urlEmail };
+
+        const fieldLabel = (field.signatureFieldLabel || field.object?._signatureFieldLabel || '').toLowerCase();
+        if (!fieldLabel || !this.signingFlowMeta?.expectedSigners) return { email: '' };
+        const signer = this.signingFlowMeta.expectedSigners.find(s => {
+            const sName = (s.name || '').toLowerCase();
+            const sEmail = (s.email || '').toLowerCase();
+            if (!sName && !sEmail) return false;
+            if (sName && (fieldLabel.includes(sName) || sName.includes(fieldLabel))) return true;
+            if (sEmail && fieldLabel.includes(sEmail)) return true;
+            return false;
+        });
+        return { email: signer?.email || '' };
+    }
+
+    /**
+     * Detect current signer from URL parameters or signing metadata
+     * Returns fieldLabel (which signature slot) and email for pre-filling the modal
+     */
+    detectCurrentSigner() {
+        const urlParams = new URLSearchParams(window.location.search);
+        const urlField = urlParams.get('field') || urlParams.get('signer') || urlParams.get('name');
+        const urlEmail = urlParams.get('email');
+        
+        if (urlField || urlEmail) {
+            return {
+                fieldLabel: urlField || '',
+                email: urlEmail || ''
+            };
+        }
+        
+        if (this.signingFlowMeta && this.signingFlowMeta.expectedSigners) {
+            const withEmail = this.signingFlowMeta.expectedSigners.filter(s => s.email);
+            if (withEmail.length === 1) {
+                return {
+                    fieldLabel: withEmail[0].name || '',  // expectedSigner.name = field label
+                    email: withEmail[0].email || ''
+                };
+            }
+        }
+        
+        return { fieldLabel: '', email: '' };
     }
 
     /**
@@ -2677,12 +4053,24 @@ class PDFEditorApp {
             return Array.from(emailColumnSelect.selectedOptions).map((o) => o.value).filter(Boolean);
         };
 
+        /** All emails from selected columns + manual, for display/validation. */
         const getEmailsForRow = (rowData, index) => {
             const cols = getSelectedEmailColumns();
             const fromCols = cols.flatMap((c) => (rowData[c] || '').trim()).filter(Boolean);
             const manual = (manualEmailByRow[index] || '').trim();
             const combined = manual ? [...fromCols, manual] : fromCols;
             return [...new Set(combined)];
+        };
+
+        /** Email(s) to use when sending: only the first signer (sequential flow). Uses first selected column, then manual if needed. */
+        const getSendToEmailsForRow = (rowData, index) => {
+            const cols = getSelectedEmailColumns();
+            const manual = (manualEmailByRow[index] || '').trim();
+            if (manual) return [manual];
+            if (cols.length === 0) return [];
+            const firstCol = cols[0];
+            const first = (rowData[firstCol] || '').trim();
+            return first ? [first] : [];
         };
 
         /** Selected email columns that have no value for this row (missing signer slot). */
@@ -2969,7 +4357,7 @@ class PDFEditorApp {
             }
 
             if (btn.classList.contains('bulk-fill-row-send')) {
-                const emails = getEmailsForRow(rowData, index);
+                const emails = getSendToEmailsForRow(rowData, index);
                 if (emails.length === 0) {
                     alert('Please enter an email for this row before sending. Add an email in the row or select email column(s) above.');
                     return;
@@ -3062,7 +4450,7 @@ class PDFEditorApp {
             for (let i = 0; i < indicesToSend.length; i++) {
                 const index = indicesToSend[i];
                 const rowData = rows[index];
-                const emails = getEmailsForRow(rowData, index);
+                const emails = getSendToEmailsForRow(rowData, index);
                 if (emails.length === 0) continue;
 
                 if (sendAllStatus) {
@@ -3161,8 +4549,8 @@ class PDFEditorApp {
                 row.setAttribute('role', 'listitem');
                 row.innerHTML = `
                     <span class="expected-signers-ordinal">${i + 1}.</span>
-                    <input type="text" class="expected-signers-name send-input" placeholder="Name" value="${escapeHtml(entry.name || '')}" data-index="${i}">
-                    <input type="email" class="expected-signers-email send-input" placeholder="Email (optional)" value="${escapeHtml(entry.email || '')}" data-index="${i}">
+                    <input type="text" class="expected-signers-name send-input" placeholder="Signature field (e.g. Tenant, Landlord)" value="${escapeHtml(entry.name || '')}" data-index="${i}" title="Must match the field label on the document">
+                    <input type="email" class="expected-signers-email send-input" placeholder="Email" value="${escapeHtml(entry.email || '')}" data-index="${i}">
                     <button type="button" class="btn btn-secondary expected-signers-remove" data-index="${i}" title="Remove signer">Remove</button>
                 `;
                 listEl.appendChild(row);

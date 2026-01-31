@@ -1,7 +1,8 @@
 /**
  * Signing metadata - Parse and build our app's signing-flow payload stored in PDF Keywords.
  * Format: Keywords = "free-pdf-v1 " + base64(JSON.stringify(payload))
- * Payload: { v: 1, signers: [...], expectedSigners?: [...], emailTemplate?: { subject, body }, originalSenderEmail?, completionToEmails?, completionCcEmails?, completionBccEmails? }
+ * Payload: { v: 1, signers: [...], expectedSigners?: [{ name/fieldLabel, email, order }], ... }
+ * expectedSigners[].name = signature field label (which slot this signer fills), not the person's legal name.
  */
 
 const PREFIX = 'free-pdf-v1 ';

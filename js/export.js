@@ -197,7 +197,7 @@ export class PDFExporter {
             case 'signature':
             case 'image':
                 await this.drawImage(pdfDoc, page, obj, scaleFactor, pageHeight);
-                // Handle signature audit trail
+                // Handle signature audit trail (signerName stored in metadata only, not drawn on page)
                 if (type === 'signature' && obj._signatureMeta && auditEntries !== null && pageNum !== null) {
                     const meta = { ...obj._signatureMeta };
                     meta.pageNum = pageNum;
@@ -209,6 +209,11 @@ export class PDFExporter {
                     };
                     auditEntries.push(meta);
                 }
+                break;
+
+            case 'signature-field':
+                // Render signature field as a dashed box with label text
+                await this.drawSignatureField(pdfDoc, page, obj, scaleFactor, pageHeight);
                 break;
 
             case 'textfield':
@@ -442,6 +447,41 @@ export class PDFExporter {
         } catch (error) {
             console.error('Error embedding image:', error);
         }
+    }
+
+    /**
+     * Draw signature field (empty placeholder box with label)
+     */
+    async drawSignatureField(pdfDoc, page, obj, scaleFactor, pageHeight) {
+        const { rgb } = PDFLib;
+        const bounds = obj.getBoundingRect();
+        const left = bounds.left * scaleFactor;
+        const width = bounds.width * scaleFactor;
+        const height = bounds.height * scaleFactor;
+        const top = pageHeight - bounds.top * scaleFactor - height;
+        const label = obj._signatureFieldLabel || 'Signature';
+
+        // Draw dashed rectangle border
+        page.drawRectangle({
+            x: left,
+            y: top,
+            width: width,
+            height: height,
+            borderColor: rgb(0.6, 0.6, 0.6),
+            borderWidth: 1.5,
+            borderDashArray: [3, 3],
+            color: rgb(1, 1, 0.9),
+            opacity: 0.3
+        });
+
+        // Draw label text
+        const fontSize = Math.min(12, height / 4);
+        page.drawText(`${label}\n(Sign here)`, {
+            x: left + width / 2 - (label.length * fontSize * 0.3),
+            y: top + height / 2 - fontSize,
+            size: fontSize,
+            color: rgb(0.4, 0.4, 0.4)
+        });
     }
 
     /**
