@@ -136,8 +136,12 @@ export class PDFExporter {
         const completionToEmails = signingFlowMeta?.completionToEmails ?? previousMeta?.completionToEmails;
         const completionCcEmails = signingFlowMeta?.completionCcEmails ?? previousMeta?.completionCcEmails;
         const completionBccEmails = signingFlowMeta?.completionBccEmails ?? previousMeta?.completionBccEmails;
+        const lockedSignatureFields = signingFlowMeta?.lockedSignatureFields ?? previousMeta?.lockedSignatureFields;
+        const lockedFormFields = signingFlowMeta?.lockedFormFields ?? previousMeta?.lockedFormFields;
+        const documentStage = signingFlowMeta?.documentStage ?? previousMeta?.documentStage;
+        const hashChain = signingFlowMeta?.hashChain ?? previousMeta?.hashChain;
         const signers = auditEntries.map((e) => ({ name: e.signerName || '', timestamp: e.timestamp || '' }));
-        const keywordsPayload = buildSigningKeywords({ signers, expectedSigners, emailTemplate, originalSenderEmail, completionToEmails, completionCcEmails, completionBccEmails });
+        const keywordsPayload = buildSigningKeywords({ signers, expectedSigners, emailTemplate, originalSenderEmail, completionToEmails, completionCcEmails, completionBccEmails, lockedSignatureFields, lockedFormFields, documentStage, hashChain });
         if (keywordsPayload) {
             outDoc.setKeywords(keywordsPayload);
         }

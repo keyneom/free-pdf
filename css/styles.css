@@ -781,6 +781,40 @@ body {
     background: var(--primary-hover);
 }
 
+.field-sidebar-signed-info {
+    padding: 6px 0;
+    color: var(--text-secondary);
+    font-size: 0.9em;
+}
+.field-sidebar-signed-info .field-sidebar-signed-date {
+    color: var(--text-tertiary, #6b7280);
+    font-size: 0.95em;
+}
+
+.field-lock-wrap {
+    margin-top: 6px;
+}
+.field-sidebar-lock-btn,
+.field-sidebar-unlock-btn {
+    padding: 4px 10px;
+    font-size: 0.8rem;
+    border: 1px solid var(--border-color);
+    background: var(--bg-color);
+    color: var(--text-color);
+    border-radius: 4px;
+    cursor: pointer;
+}
+.field-sidebar-lock-btn:hover,
+.field-sidebar-unlock-btn:hover {
+    background: var(--hover-bg, #f3f4f6);
+    border-color: var(--primary-color);
+}
+.field-sidebar-locked-label {
+    font-size: 0.8rem;
+    color: var(--text-secondary);
+    font-style: italic;
+}
+
 /* Inline editors overlaid on canvas (Fill mode) */
 .inline-field-editor {
     font-family: inherit;
@@ -889,6 +923,13 @@ body {
 .field-property-group select:focus {
     outline: none;
     border-color: var(--primary-color);
+}
+
+.field-property-group .field-detail-readonly {
+    margin: 0;
+    padding: 6px 0;
+    color: var(--text-color);
+    font-size: 0.9rem;
 }
 
 .field-property-group small {

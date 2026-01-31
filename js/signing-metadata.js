@@ -1,8 +1,10 @@
 /**
  * Signing metadata - Parse and build our app's signing-flow payload stored in PDF Keywords.
  * Format: Keywords = "free-pdf-v1 " + base64(JSON.stringify(payload))
- * Payload: { v: 1, signers: [...], expectedSigners?: [{ name/fieldLabel, email, order }], ... }
- * expectedSigners[].name = signature field label (which slot this signer fills), not the person's legal name.
+ * Payload: { v: 1, signers: [...], expectedSigners?: [...], lockedSignatureFields?: string[], documentStage?: 'draft'|'sent'|'signed', hashChain?: { h, t, p }, ... }
+ * - lockedSignatureFields: field labels that are signed and must not be modified by another participant.
+ * - documentStage: draft (editable), sent (sent for signing), signed (has signatures; treat as received).
+ * - hashChain: latest link { h: documentHash, t: timestamp, p: previousHash } for proving when changes were made.
  */
 
 const PREFIX = 'free-pdf-v1 ';
@@ -16,13 +18,13 @@ function parseEmailList(arr) {
 /**
  * Parse Keywords string. Returns null if not our metadata.
  * @param {string} [keywords]
- * @returns {{ signers: Array<...>, expectedSigners?: Array<...>, emailTemplate?: { subject, body }, originalSenderEmail?: string, completionToEmails?: string[], completionCcEmails?: string[], completionBccEmails?: string[] } | null}
+ * @returns {{ signers: Array<...>, expectedSigners?: Array<...>, lockedSignatureFields?: string[], documentStage?: string, hashChain?: { hash, timestamp, previousHash }, ... } | null}
  */
 export function parseSigningMetadata(keywords) {
     if (typeof keywords !== 'string' || !keywords.startsWith(PREFIX)) return null;
     try {
         const raw = keywords.slice(PREFIX.length).trim();
-        if (!raw) return { signers: [], expectedSigners: [], emailTemplate: undefined, originalSenderEmail: undefined, completionToEmails: undefined, completionCcEmails: undefined, completionBccEmails: undefined };
+        if (!raw) return { signers: [], expectedSigners: [], emailTemplate: undefined, originalSenderEmail: undefined, completionToEmails: undefined, completionCcEmails: undefined, completionBccEmails: undefined, lockedSignatureFields: [], lockedFormFields: [], documentStage: undefined, hashChain: undefined };
         const json = decodeURIComponent(escape(atob(raw)));
         const data = JSON.parse(json);
         if (!data || data.v !== 1) return null;
@@ -43,7 +45,13 @@ export function parseSigningMetadata(keywords) {
         const completionToEmails = parseEmailList(data.completionToEmails);
         const completionCcEmails = parseEmailList(data.completionCcEmails);
         const completionBccEmails = parseEmailList(data.completionBccEmails);
-        return { signers, expectedSigners, emailTemplate, originalSenderEmail, completionToEmails, completionCcEmails, completionBccEmails };
+        const lockedSignatureFields = Array.isArray(data.lockedSignatureFields) ? data.lockedSignatureFields.filter((l) => typeof l === 'string').map((l) => String(l).trim()) : [];
+        const lockedFormFields = Array.isArray(data.lockedFormFields) ? data.lockedFormFields.filter((l) => typeof l === 'string').map((l) => String(l).trim()) : [];
+        const documentStage = typeof data.documentStage === 'string' && ['draft', 'sent', 'signed'].includes(data.documentStage) ? data.documentStage : undefined;
+        const hashChain = data.hashChain && typeof data.hashChain === 'object' && typeof data.hashChain.h === 'string'
+            ? { hash: data.hashChain.h, timestamp: data.hashChain.t || '', previousHash: typeof data.hashChain.p === 'string' ? data.hashChain.p : undefined }
+            : undefined;
+        return { signers, expectedSigners, emailTemplate, originalSenderEmail, completionToEmails, completionCcEmails, completionBccEmails, lockedSignatureFields, lockedFormFields, documentStage, hashChain };
     } catch {
         return null;
     }
@@ -51,7 +59,7 @@ export function parseSigningMetadata(keywords) {
 
 /**
  * Build Keywords string for embedding in PDF.
- * @param {{ signers: Array<{ name: string, timestamp: string }>, expectedSigners?: Array<{ name: string, email?: string, order?: number }>, emailTemplate?: { subject: string, body: string }, originalSenderEmail?: string, completionToEmails?: string[] }} payload
+ * @param {{ signers: Array<...>, expectedSigners?: Array<...>, lockedSignatureFields?: string[], documentStage?: 'draft'|'sent'|'signed', hashChain?: { hash, timestamp, previousHash }, ... }} payload
  * @returns {string}
  */
 export function buildSigningKeywords(payload) {
@@ -80,6 +88,22 @@ export function buildSigningKeywords(payload) {
     if (Array.isArray(payload.completionBccEmails) && payload.completionBccEmails.length > 0) {
         data.completionBccEmails = payload.completionBccEmails.filter((e) => typeof e === 'string' && e.trim()).map((e) => String(e).trim());
     }
+    if (Array.isArray(payload.lockedSignatureFields) && payload.lockedSignatureFields.length > 0) {
+        data.lockedSignatureFields = payload.lockedSignatureFields.filter((l) => typeof l === 'string' && l.trim()).map((l) => String(l).trim());
+    }
+    if (Array.isArray(payload.lockedFormFields) && payload.lockedFormFields.length > 0) {
+        data.lockedFormFields = payload.lockedFormFields.filter((l) => typeof l === 'string' && l.trim()).map((l) => String(l).trim());
+    }
+    if (typeof payload.documentStage === 'string' && ['draft', 'sent', 'signed'].includes(payload.documentStage)) {
+        data.documentStage = payload.documentStage;
+    }
+    if (payload.hashChain && typeof payload.hashChain.hash === 'string') {
+        data.hashChain = {
+            h: payload.hashChain.hash,
+            t: typeof payload.hashChain.timestamp === 'string' ? payload.hashChain.timestamp : new Date().toISOString(),
+            p: typeof payload.hashChain.previousHash === 'string' ? payload.hashChain.previousHash : undefined
+        };
+    }
     return PREFIX + btoa(unescape(encodeURIComponent(JSON.stringify(data))));
 }
 
@@ -93,4 +117,24 @@ export function hasOurSigningMetadata(metadata) {
     if (typeof info.Keywords === 'string' && info.Keywords.startsWith(PREFIX)) return true;
     if (typeof info.Producer === 'string' && info.Producer.includes('Free PDF Editor')) return true;
     return false;
+}
+
+/**
+ * Compute SHA-256 hash of a string for the document hash chain.
+ * @param {string} data - Canonical string (e.g. JSON of viewPages + annotation digests)
+ * @returns {Promise<string>} Hex-encoded hash
+ */
+export async function computeDocumentHash(data) {
+    if (typeof crypto !== 'object' || !crypto.subtle) {
+        return '';
+    }
+    try {
+        const encoder = new TextEncoder();
+        const bytes = encoder.encode(typeof data === 'string' ? data : JSON.stringify(data));
+        const hashBuffer = await crypto.subtle.digest('SHA-256', bytes);
+        const hashArray = Array.from(new Uint8Array(hashBuffer));
+        return hashArray.map((b) => b.toString(16).padStart(2, '0')).join('');
+    } catch {
+        return '';
+    }
 }

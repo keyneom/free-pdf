@@ -9,7 +9,7 @@ import { SignaturePad } from './signature-pad.js';
 import { emailTemplates, setTemplatesBackend, getDefaultOnlyTemplatesStore } from './email-templates.js';
 import { secureStorage } from './secure-storage.js';
 import { BulkFillHandler } from './bulk-fill.js';
-import { parseSigningMetadata, hasOurSigningMetadata } from './signing-metadata.js';
+import { parseSigningMetadata, hasOurSigningMetadata, computeDocumentHash } from './signing-metadata.js';
 
 function escapeHtml(s) {
     if (s == null) return '';
@@ -36,6 +36,8 @@ class PDFEditorApp {
         this.viewPages = []; // [{ id, docId, sourcePageNum, rotation }]
         /** Parsed from PDF Keywords when loading a doc that has our signing metadata */
         this.signingFlowMeta = null;
+        /** Fields locked in an exported version; cannot be unlocked in this session (signatures: Set of labels, formFields: Set of field names) */
+        this.lockedFromFile = { signatures: new Set(), formFields: new Set() };
         this._pendingSignatureImage = null;
         this._selectedSavedSig = null;
         
@@ -655,16 +657,42 @@ class PDFEditorApp {
             const pageAnnotations = pageData.annotations || [];
             pageAnnotations.forEach(ann => {
                 if (['textfield', 'checkbox', 'radio', 'dropdown', 'date', 'signature-field'].includes(ann.type)) {
+                    const fieldName = ann.data?._fieldName || '';
+                    const locked = !!ann.object?._fieldLocked;
+                    const fieldId = fieldName.trim();
+                    const permanentlyLocked = !!fieldId && this.lockedFromFile?.formFields?.has(fieldId);
                     allFields.push({
                         type: ann.type,
-                        fieldName: ann.data?._fieldName || '',
+                        fieldName,
                         fieldValue: ann.data?._fieldValue || '',
                         checked: ann.data?._checked || false,
                         selectedOption: ann.data?._selectedOption || '',
                         signatureFieldLabel: ann.data?._signatureFieldLabel || '',
                         pageNum: pageIndex + 1,
                         pageId: pageData.pageId,
-                        object: ann.object
+                        object: ann.object,
+                        locked,
+                        permanentlyLocked
+                    });
+                } else if (ann.type === 'signature' && ann.data?._signatureMeta?.replacedFieldLabel) {
+                    // Filled signature field: show in sidebar so the field doesn't "disappear" after signing
+                    const meta = ann.data._signatureMeta;
+                    const sigLabel = (meta.replacedFieldLabel || 'Signature').trim();
+                    const permanentlyLocked = !!sigLabel && this.lockedFromFile?.signatures?.has(sigLabel);
+                    allFields.push({
+                        type: 'signature-filled',
+                        fieldName: '',
+                        fieldValue: '',
+                        checked: false,
+                        selectedOption: '',
+                        signatureFieldLabel: meta.replacedFieldLabel || 'Signature',
+                        signerName: meta.signerName || '',
+                        signedAt: meta.timestamp || '',
+                        pageNum: pageIndex + 1,
+                        pageId: pageData.pageId,
+                        object: ann.object,
+                        locked: true,
+                        permanentlyLocked
                     });
                 }
             });
@@ -694,6 +722,7 @@ class PDFEditorApp {
             fieldItem.dataset.pageId = field.pageId;
             
             const label = field.fieldName || field.signatureFieldLabel || `${field.type} ${index + 1}`;
+            const typeLabel = field.type === 'signature-filled' ? 'signature (signed)' : field.type;
             
             // Create header
             const header = document.createElement('div');
@@ -702,7 +731,7 @@ class PDFEditorApp {
                 <span class="field-item-label">${escapeHtml(label)}</span>
                 <span class="field-item-actions">
                     <button type="button" class="field-configure-btn" title="Configure field" data-field-index="${index}">⚙</button>
-                    <span class="field-item-type">${escapeHtml(field.type)}</span>
+                    <span class="field-item-type">${escapeHtml(typeLabel)}</span>
                 </span>
             `;
             fieldItem.appendChild(header);
@@ -728,58 +757,55 @@ class PDFEditorApp {
                 input.placeholder = field.type === 'date' ? 'YYYY-MM-DD' : 'Enter value...';
                 input.value = field.fieldValue || '';
                 input.dataset.fieldIndex = index;
-                
+                input.disabled = !!field.locked;
                 input.addEventListener('input', (e) => {
-                    this.updateFieldValue(field, e.target.value);
+                    if (!field.locked) this.updateFieldValue(field, e.target.value);
                 });
                 input.addEventListener('focus', () => {
                     this.navigateToField(field);
-                    // Don't call highlightFieldOnCanvas - it can interfere with typing
                 });
-                
                 inputContainer.appendChild(input);
+                if (this.mode === 'fill') this._appendLockUnlock(inputContainer, field);
             } else if (field.type === 'checkbox') {
                 const checkbox = document.createElement('input');
                 checkbox.type = 'checkbox';
                 checkbox.className = 'field-sidebar-checkbox';
                 checkbox.checked = field.checked || false;
                 checkbox.dataset.fieldIndex = index;
-                
+                checkbox.disabled = !!field.locked;
                 checkbox.addEventListener('change', (e) => {
-                    this.updateFieldChecked(field, e.target.checked);
+                    if (!field.locked) this.updateFieldChecked(field, e.target.checked);
                 });
                 checkbox.addEventListener('focus', () => {
                     this.navigateToField(field);
                 });
-                
                 const checkLabel = document.createElement('label');
                 checkLabel.textContent = field.checked ? 'Checked' : 'Unchecked';
                 checkLabel.style.marginLeft = '8px';
                 checkLabel.style.color = 'var(--text-secondary)';
-                
                 inputContainer.appendChild(checkbox);
                 inputContainer.appendChild(checkLabel);
+                if (this.mode === 'fill') this._appendLockUnlock(inputContainer, field);
             } else if (field.type === 'radio') {
                 const radio = document.createElement('input');
                 radio.type = 'checkbox'; // Use checkbox to allow toggle
                 radio.className = 'field-sidebar-checkbox';
                 radio.checked = field.checked || false;
                 radio.dataset.fieldIndex = index;
-                
+                radio.disabled = !!field.locked;
                 radio.addEventListener('change', (e) => {
-                    this.updateFieldChecked(field, e.target.checked);
+                    if (!field.locked) this.updateFieldChecked(field, e.target.checked);
                 });
                 radio.addEventListener('focus', () => {
                     this.navigateToField(field);
                 });
-                
                 const radioLabel = document.createElement('label');
                 radioLabel.textContent = field.checked ? 'Selected' : 'Not selected';
                 radioLabel.style.marginLeft = '8px';
                 radioLabel.style.color = 'var(--text-secondary)';
-                
                 inputContainer.appendChild(radio);
                 inputContainer.appendChild(radioLabel);
+                if (this.mode === 'fill') this._appendLockUnlock(inputContainer, field);
             } else if (field.type === 'dropdown') {
                 const select = document.createElement('select');
                 select.className = 'field-sidebar-select';
@@ -801,14 +827,15 @@ class PDFEditorApp {
                     select.appendChild(option);
                 });
                 
+                select.disabled = !!field.locked;
                 select.addEventListener('change', (e) => {
-                    this.updateFieldDropdown(field, e.target.value);
+                    if (!field.locked) this.updateFieldDropdown(field, e.target.value);
                 });
                 select.addEventListener('focus', () => {
                     this.navigateToField(field);
                 });
-                
                 inputContainer.appendChild(select);
+                if (this.mode === 'fill') this._appendLockUnlock(inputContainer, field);
             } else if (field.type === 'signature-field') {
                 const signBtn = document.createElement('button');
                 signBtn.className = 'field-sidebar-sign-btn';
@@ -822,6 +849,18 @@ class PDFEditorApp {
                 });
                 
                 inputContainer.appendChild(signBtn);
+            } else if (field.type === 'signature-filled') {
+                const signedInfo = document.createElement('div');
+                signedInfo.className = 'field-sidebar-signed-info';
+                const signer = field.signerName ? `Signed by ${escapeHtml(field.signerName)}` : 'Signed';
+                const dateStr = field.signedAt ? (() => {
+                    try {
+                        const d = new Date(field.signedAt);
+                        return isNaN(d.getTime()) ? '' : d.toLocaleString();
+                    } catch (_) { return ''; }
+                })() : '';
+                signedInfo.innerHTML = signer + (dateStr ? `<br><small class="field-sidebar-signed-date">${escapeHtml(dateStr)}</small>` : '');
+                inputContainer.appendChild(signedInfo);
             }
             
             fieldItem.appendChild(inputContainer);
@@ -906,6 +945,70 @@ class PDFEditorApp {
     }
 
     /**
+     * Append Lock or Unlock button for a form field in the sidebar (fill mode only).
+     * @param {HTMLElement} container - Parent to append the button to
+     * @param {Object} field - Field descriptor with locked, permanentlyLocked
+     */
+    _appendLockUnlock(container, field) {
+        const wrap = document.createElement('div');
+        wrap.className = 'field-lock-wrap';
+        if (field.locked) {
+            if (!field.permanentlyLocked) {
+                const unlockBtn = document.createElement('button');
+                unlockBtn.type = 'button';
+                unlockBtn.className = 'field-sidebar-unlock-btn';
+                unlockBtn.textContent = 'Unlock';
+                unlockBtn.title = 'Unlock this field (only before exporting)';
+                unlockBtn.addEventListener('click', () => this.unlockField(field));
+                wrap.appendChild(unlockBtn);
+            } else {
+                const lockedLabel = document.createElement('span');
+                lockedLabel.className = 'field-sidebar-locked-label';
+                lockedLabel.textContent = 'Locked (from exported version)';
+                lockedLabel.title = 'This field was locked in an exported version and cannot be unlocked';
+                wrap.appendChild(lockedLabel);
+            }
+        } else {
+            const lockBtn = document.createElement('button');
+            lockBtn.type = 'button';
+            lockBtn.className = 'field-sidebar-lock-btn';
+            lockBtn.textContent = 'Lock';
+            lockBtn.title = 'Lock this field so it cannot be changed after export';
+            lockBtn.addEventListener('click', () => this.lockField(field));
+            wrap.appendChild(lockBtn);
+        }
+        container.appendChild(wrap);
+    }
+
+    /**
+     * Lock a form field (cannot be edited until unlocked; after export, lock is permanent for that version).
+     */
+    lockField(field) {
+        if (!field?.object || field.type === 'signature-filled') return;
+        field.object._fieldLocked = true;
+        const canvas = this.canvasManager.canvases.get(field.pageId);
+        if (canvas) {
+            this.canvasManager._applyObjectInteractivity(field.object, true, this.canvasManager.activeTool);
+            canvas.renderAll();
+        }
+        this.refreshFieldsSidebar();
+    }
+
+    /**
+     * Unlock a form field. Only allowed if the field was not locked in an exported version (permanentlyLocked).
+     */
+    unlockField(field) {
+        if (!field?.object || field.permanentlyLocked) return;
+        field.object._fieldLocked = false;
+        const canvas = this.canvasManager.canvases.get(field.pageId);
+        if (canvas) {
+            this.canvasManager._applyObjectInteractivity(field.object, true, this.canvasManager.activeTool);
+            canvas.renderAll();
+        }
+        this.refreshFieldsSidebar();
+    }
+
+    /**
      * Highlight a field on the canvas and show font controls
      */
     highlightFieldOnCanvas(field) {
@@ -927,8 +1030,8 @@ class PDFEditorApp {
         const fieldsList = document.getElementById('fields-list');
         if (!fieldsList) return;
         
-        // Find the field item that corresponds to this object
-        const inputs = fieldsList.querySelectorAll('.field-sidebar-input, .field-sidebar-checkbox, .field-sidebar-select, .field-sidebar-sign-btn');
+        // Find the field item that corresponds to this object (include signature-filled read-only row)
+        const inputs = fieldsList.querySelectorAll('.field-sidebar-input, .field-sidebar-checkbox, .field-sidebar-select, .field-sidebar-sign-btn, .field-sidebar-signed-info');
         
         for (const input of inputs) {
             const fieldItem = input.closest('.field-item');
@@ -942,11 +1045,13 @@ class PDFEditorApp {
             
             for (const pageData of annotations) {
                 for (const ann of pageData.annotations || []) {
-                    if (['textfield', 'checkbox', 'radio', 'dropdown', 'date', 'signature-field'].includes(ann.type)) {
+                    const isFormField = ['textfield', 'checkbox', 'radio', 'dropdown', 'date', 'signature-field'].includes(ann.type);
+                    const isFilledSignature = ann.type === 'signature' && ann.data?._signatureMeta?.replacedFieldLabel;
+                    if (isFormField || isFilledSignature) {
                         if (ann.object === fieldObject) {
-                            // Found the matching field - focus its input
-                            input.focus();
-                            input.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+                            // Found the matching field - focus its input (or scroll to row for signature-filled)
+                            if (input.focus) input.focus();
+                            input.closest('.field-item')?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
                             return;
                         }
                         fieldIndex++;
@@ -965,6 +1070,7 @@ class PDFEditorApp {
         const detailWrap = document.getElementById('fields-detail-wrap');
         const titleEl = document.getElementById('fields-sidebar-title');
         const hintEl = document.getElementById('fields-sidebar-hint');
+        const detailBody = document.getElementById('fields-detail-body');
         
         if (!listWrap || !detailWrap) return;
         
@@ -972,6 +1078,30 @@ class PDFEditorApp {
         detailWrap.classList.remove('hidden');
         if (titleEl) titleEl.textContent = 'Configure Field';
         if (hintEl) hintEl.textContent = '';
+        
+        // Filled signature: read-only detail (field label, signer, date)
+        if (field.type === 'signature-filled') {
+            const signedDate = field.signedAt ? (() => {
+                try {
+                    const d = new Date(field.signedAt);
+                    return isNaN(d.getTime()) ? field.signedAt : d.toLocaleString();
+                } catch (_) { return field.signedAt || ''; }
+            })() : '';
+            if (detailBody) {
+                detailBody.innerHTML = `
+                    <div class="field-property-group">
+                        <label>Field Label</label>
+                        <p class="field-detail-readonly">${this.escapeHtml(field.signatureFieldLabel || 'Signature')}</p>
+                    </div>
+                    <div class="field-property-group">
+                        <label>Signed by</label>
+                        <p class="field-detail-readonly">${this.escapeHtml(field.signerName || '—')}</p>
+                    </div>
+                    ${signedDate ? `<div class="field-property-group"><label>Date</label><p class="field-detail-readonly">${this.escapeHtml(signedDate)}</p></div>` : ''}
+                `;
+            }
+            return;
+        }
         
         const label = field.fieldName || field.signatureFieldLabel || field.type;
         const isTextBased = ['textfield', 'date', 'dropdown'].includes(field.type);
@@ -1187,13 +1317,21 @@ class PDFEditorApp {
         // Navigate to the field first
         this.navigateToField(field);
         
-        // Find the actual field object on the canvas and trigger its edit handler
         const canvas = this.canvasManager.canvases.get(field.pageId);
         if (!canvas) return;
         
+        // Filled signature: just navigate and select the signature on canvas (no editing)
+        if (field.type === 'signature-filled' && field.object) {
+            canvas.setActiveObject(field.object);
+            canvas.renderAll();
+            this.canvasManager.onSelectionChanged(canvas);
+            return;
+        }
+        
+        // Find the actual field object on the canvas and trigger its edit handler
         const objects = canvas.getObjects();
         const fieldObj = objects.find(obj => {
-            return obj._annotationType === field.type && 
+            return obj._annotationType === field.type &&
                    (obj._fieldName === field.fieldName || obj._signatureFieldLabel === field.signatureFieldLabel);
         });
         
@@ -1398,6 +1536,7 @@ class PDFEditorApp {
 
             // Detect our signing metadata (Keywords or Producer) so we can show multi-signer flow
             this.signingFlowMeta = null;
+            this.lockedFromFile = { signatures: new Set(), formFields: new Set() };
             try {
                 const metadata = await this.pdfHandler.getMetadata(mainDocId);
                 if (hasOurSigningMetadata(metadata)) {
@@ -1405,6 +1544,8 @@ class PDFEditorApp {
                     const parsed = parseSigningMetadata(info.Keywords);
                     if (parsed) {
                         this.signingFlowMeta = parsed;
+                        (parsed.lockedSignatureFields || []).forEach((l) => this.lockedFromFile.signatures.add(l));
+                        (parsed.lockedFormFields || []).forEach((l) => this.lockedFromFile.formFields.add(l));
                     } else {
                         // Producer says our app but no Keywords yet (e.g. first save)
                         this.signingFlowMeta = { signers: [], expectedSigners: [] };
@@ -1495,14 +1636,18 @@ class PDFEditorApp {
     switchMode(newMode) {
         if (this.mode === newMode) return;
 
-        // Warn if switching from Fill to Edit with active signing flow
-        if (newMode === 'edit' && this.mode === 'fill' && this.signingFlowMeta) {
-            const ok = confirm(
-                'Switching to Edit Mode may modify the document structure and disrupt the signing flow.\n\n' +
-                'In Edit Mode, you can add/remove fields, rearrange pages, and make structural changes that could invalidate signatures.\n\n' +
-                'Continue to Edit Mode?'
-            );
-            if (!ok) return;
+        // Warn if switching from Fill to Edit with active signing flow; clear signing flow on switch
+        if (newMode === 'edit' && this.mode === 'fill') {
+            if (this.signingFlowMeta) {
+                const ok = confirm(
+                    'Switching to Edit Mode will clear the signing flow. You can make structural changes and set up a new signing flow in Fill mode later.\n\n' +
+                    'Continue to Edit Mode?'
+                );
+                if (!ok) return;
+            }
+            // Clear signing flow so they can start a new one
+            this.signingFlowMeta = null;
+            this.lockedFromFile = { signatures: new Set(), formFields: new Set() };
         }
 
         this.mode = newMode;
@@ -2874,6 +3019,53 @@ class PDFEditorApp {
             annotationsByPageId.set(p.pageId, p.annotations);
         }
 
+        // Collect locked signature field labels and locked form field names (permanently locked on export)
+        const lockedSignatureFields = [];
+        const lockedFormFields = [];
+        for (const p of annotationsArr) {
+            for (const ann of p.annotations || []) {
+                if (ann.type === 'signature' && ann.object?._signatureLocked && ann.data?._signatureMeta?.replacedFieldLabel) {
+                    const label = (ann.data._signatureMeta.replacedFieldLabel || '').trim();
+                    if (label && !lockedSignatureFields.includes(label)) lockedSignatureFields.push(label);
+                }
+                if (['textfield', 'checkbox', 'radio', 'dropdown', 'date'].includes(ann.type) && ann.object?._fieldLocked && ann.data?._fieldName) {
+                    const name = (ann.data._fieldName || '').trim();
+                    if (name && !lockedFormFields.includes(name)) lockedFormFields.push(name);
+                }
+            }
+        }
+        const mergedLockedSignatures = [...new Set([...(this.signingFlowMeta?.lockedSignatureFields || []), ...lockedSignatureFields])];
+        const mergedLockedFormFields = [...new Set([...(this.signingFlowMeta?.lockedFormFields || []), ...lockedFormFields])];
+
+        // Document stage: signed if any locked fields; otherwise preserve previous or draft
+        const documentStage = (mergedLockedSignatures.length > 0 || mergedLockedFormFields.length > 0) ? 'signed' : (this.signingFlowMeta?.documentStage || 'draft');
+
+        // Build canonical digest for hash chain (proves when changes were made)
+        const canonical = {
+            viewPages: (this.viewPages || []).map((vp) => ({ id: vp.id, docId: vp.docId, sourcePageNum: vp.sourcePageNum, rotation: vp.rotation })),
+            pages: (this.viewPages || []).map((vp) => {
+                const anns = annotationsByPageId.get(vp.id) || [];
+                const digests = anns.map((a) => {
+                    const type = a.type || '';
+                    const label = a.data?._signatureMeta?.replacedFieldLabel ?? a.data?._fieldName ?? a.data?._signatureFieldLabel ?? '';
+                    return { type, label: (label || '').trim() };
+                }).sort((a, b) => (a.type + a.label).localeCompare(b.type + b.label));
+                return digests;
+            })
+        };
+        const documentHash = await computeDocumentHash(JSON.stringify(canonical));
+        const previousHash = this.signingFlowMeta?.hashChain?.hash || undefined;
+        const hashChain = documentHash ? { hash: documentHash, timestamp: new Date().toISOString(), previousHash } : undefined;
+        this.documentHash = documentHash || this.documentHash;
+
+        const exportSigningFlowMeta = {
+            ...this.signingFlowMeta,
+            lockedSignatureFields: mergedLockedSignatures.length > 0 ? mergedLockedSignatures : (this.signingFlowMeta?.lockedSignatureFields),
+            lockedFormFields: mergedLockedFormFields.length > 0 ? mergedLockedFormFields : (this.signingFlowMeta?.lockedFormFields),
+            documentStage,
+            hashChain
+        };
+
         const docBytesById = this.pdfHandler.getAllOriginalBytes();
         const modifiedPdfBytes = await this.exporter.exportPDF({
             docBytesById,
@@ -2881,8 +3073,12 @@ class PDFEditorApp {
             annotationsByPageId,
             scale: this.currentScale,
             mainDocId: this.pdfHandler.mainDocId,
-            signingFlowMeta: this.signingFlowMeta
+            signingFlowMeta: exportSigningFlowMeta
         });
+
+        // Once exported, those locked fields become permanent for this session (cannot be unlocked)
+        mergedLockedSignatures.forEach((l) => this.lockedFromFile.signatures.add(l));
+        mergedLockedFormFields.forEach((l) => this.lockedFromFile.formFields.add(l));
 
         const baseName = (this.fileName || '').replace(/\.pdf$/i, '').trim();
         const hasRealFilename = baseName && baseName !== 'document';
@@ -4741,8 +4937,13 @@ class PDFEditorApp {
         const hasCompletionTo = completionTo.length > 0;
         const allSigned = totalExpected > 0 && countSoFar >= totalExpected;
         const lastSigner = totalExpected > 0 && countSoFar === totalExpected - 1;
+        const lockedFields = this.signingFlowMeta.lockedSignatureFields || [];
+        const hasLockedFields = lockedFields.length > 0 || this.signingFlowMeta.documentStage === 'signed';
 
         let msg = 'This document is part of a signing flow. ';
+        if (hasLockedFields) {
+            msg += 'Signed fields are locked and cannot be modified by another participant. ';
+        }
         if (allSigners.length > 0) {
             msg += `Signatures so far: ${allSigners.join(', ')}. `;
         }

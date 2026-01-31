@@ -312,10 +312,25 @@ export class CanvasManager {
                            obj._annotationType === 'radio' ||
                            obj._annotationType === 'dropdown' ||
                            obj._annotationType === 'date';
+        const isLockedFormField = isFormField && obj._fieldLocked;
         const isSignatureField = obj._annotationType === 'signature-field';
+        const isLockedSignature = obj._annotationType === 'signature' && obj._signatureLocked;
 
         if (fillMode) {
-            if (isFormField || isSignatureField) {
+            if (isLockedFormField || isLockedSignature) {
+                // Locked form fields and signed fields: read-only, not editable
+                obj.set({
+                    selectable: false,
+                    evented: true,
+                    hasControls: false,
+                    hasBorders: false,
+                    lockMovementX: true,
+                    lockMovementY: true,
+                    lockScalingX: true,
+                    lockScalingY: true,
+                    lockRotation: true
+                });
+            } else if (isFormField || isSignatureField) {
                 obj.set({
                     selectable: false,
                     evented: true,
@@ -331,17 +346,32 @@ export class CanvasManager {
                 obj.set({ selectable: false, evented: false });
             }
         } else if (activeTool === 'select') {
-            obj.set({
-                selectable: true,
-                evented: true,
-                hasControls: true,
-                hasBorders: true,
-                lockMovementX: false,
-                lockMovementY: false,
-                lockScalingX: false,
-                lockScalingY: false,
-                lockRotation: false
-            });
+            if (isLockedSignature || isLockedFormField) {
+                // Locked signatures/form fields: selectable (e.g. show in sidebar) but not moved/resized/deleted
+                obj.set({
+                    selectable: true,
+                    evented: true,
+                    hasControls: false,
+                    hasBorders: true,
+                    lockMovementX: true,
+                    lockMovementY: true,
+                    lockScalingX: true,
+                    lockScalingY: true,
+                    lockRotation: true
+                });
+            } else {
+                obj.set({
+                    selectable: true,
+                    evented: true,
+                    hasControls: true,
+                    hasBorders: true,
+                    lockMovementX: false,
+                    lockMovementY: false,
+                    lockScalingX: false,
+                    lockScalingY: false,
+                    lockRotation: false
+                });
+            }
         } else {
             obj.set({ selectable: false, evented: false });
         }
@@ -1106,6 +1136,7 @@ export class CanvasManager {
             _annotationType: 'textfield',
             _fieldValue: '',
             _fieldName: defaultName,
+            _fieldLocked: false,
             _labelFontSize: labelFontSize,
             _valueFontSize: valueFontSize,
             _padding: padding
@@ -1114,8 +1145,8 @@ export class CanvasManager {
         // Prevent text distortion on resize
         this._setupFormFieldScaling(group, canvas, padding);
 
-        // Add double-click handler to edit the field (inline editor)
         group.on('mousedblclick', () => {
+            if (group._fieldLocked) return;
             this._showInlineTextEditor(group, canvas);
         });
 
@@ -1153,11 +1184,12 @@ export class CanvasManager {
             selectable: true,
             _annotationType: 'checkbox',
             _checked: false,
-            _fieldName: defaultName
+            _fieldName: defaultName,
+            _fieldLocked: false
         });
 
-        // Toggle on double click
         group.on('mousedblclick', () => {
+            if (group._fieldLocked) return;
             this.toggleCheckbox(group, canvas);
         });
 
@@ -1195,11 +1227,13 @@ export class CanvasManager {
             _annotationType: 'radio',
             _checked: false,
             _fieldName: defaultName,
+            _fieldLocked: false,
             _radioGroup: defaultName,
             _radioValue: `option_${Math.random().toString(36).slice(2, 10)}`
         });
 
         group.on('mousedblclick', () => {
+            if (group._fieldLocked) return;
             this.toggleRadio(group, canvas);
         });
 
@@ -1315,6 +1349,7 @@ export class CanvasManager {
             selectable: true,
             _annotationType: 'dropdown',
             _fieldName: defaultName,
+            _fieldLocked: false,
             _options: ['Option 1', 'Option 2'],
             _selectedOption: '',
             _labelFontSize: labelFontSize,
@@ -1322,15 +1357,11 @@ export class CanvasManager {
             _padding: padding
         });
         
-        // Prevent text distortion on resize
         this._setupFormFieldScaling(group, canvas, padding);
         
         group.on('mousedblclick', () => {
-            if (this.fillMode) {
-                // In fill mode: show inline select overlay
-                this._showInlineDropdownEditor(group, canvas);
-            }
-            // In edit mode: selecting the dropdown already shows Field Properties sidebar
+            if (group._fieldLocked) return;
+            if (this.fillMode) this._showInlineDropdownEditor(group, canvas);
         });
         canvas.add(group);
         canvas.setActiveObject(group);
@@ -1395,16 +1426,16 @@ export class CanvasManager {
             _annotationType: 'date',
             _fieldValue: '',
             _fieldName: defaultName,
+            _fieldLocked: false,
             _labelFontSize: labelFontSize,
             _valueFontSize: valueFontSize,
             _padding: padding
         });
         
-        // Prevent text distortion on resize
         this._setupFormFieldScaling(group, canvas, padding);
         
-        // Add double-click handler to edit the field (inline editor)
         group.on('mousedblclick', () => {
+            if (group._fieldLocked) return;
             this._showInlineTextEditor(group, canvas);
         });
         
@@ -1557,9 +1588,10 @@ export class CanvasManager {
                 top: top,
                 scaleX: scale,
                 scaleY: scale,
-                selectable: this.fillMode ? false : true, // Not selectable in fill mode
+                selectable: this.fillMode ? false : true,
                 _annotationType: 'signature',
-                _signatureMeta: meta
+                _signatureMeta: meta,
+                _signatureLocked: true // Immutable once signed; cannot be moved, resized, or deleted by another participant
             });
 
             // Remove the signature field
@@ -1697,6 +1729,8 @@ export class CanvasManager {
             const activeObjects = canvas.getActiveObjects();
             if (activeObjects.length > 0) {
                 activeObjects.forEach((obj) => {
+                    // Signed/locked fields are immutable; do not allow deletion
+                    if (obj._signatureLocked || obj._fieldLocked) return;
                     canvas.remove(obj);
                 });
                 canvas.discardActiveObject();
@@ -1722,6 +1756,8 @@ export class CanvasManager {
                 '_fieldName',
                 '_signatureMeta',
                 '_signatureFieldLabel',
+                '_signatureLocked',
+                '_fieldLocked',
                 '_noteText',
                 '_stampText',
                 '_options',
@@ -1833,7 +1869,7 @@ export class CanvasManager {
             canvas.forEachObject((obj) => {
                 pageAnnotations.push({
                     type: obj._annotationType || obj.type,
-                    data: obj.toJSON(['_annotationType', '_checked', '_fieldValue', '_fieldName', '_signatureMeta', '_signatureFieldLabel']),
+                    data: obj.toJSON(['_annotationType', '_checked', '_fieldValue', '_fieldName', '_signatureMeta', '_signatureFieldLabel', '_signatureLocked', '_fieldLocked']),
                     object: obj
                 });
             });
