@@ -16,6 +16,8 @@
     <!-- QR code: generate + scan for vault transfer -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js"></script>
+    <!-- p2pago ZKP2P Donate SDK -->
+    <script src="https://unpkg.com/@p2pago/zkp2p-donate/dist/umd/zkp2p-donate.js"></script>
 </head>
 <body>
     <div id="app">
@@ -164,6 +166,13 @@
                     <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg>
                     <span>Bulk Fill</span>
                 </button>
+                <button id="btn-donate" class="tool-btn" title="Support this project">
+                    <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/></svg>
+                    <span>Donate</span>
+                </button>
+                <a id="support-link" class="tool-btn support-link" href="https://github.com/micaelsanchez/free-pdf/issues/new/choose" target="_blank" rel="noopener noreferrer" title="Support / Help">
+                    <span>Support</span>
+                </a>
             </div>
         </header>
 
@@ -183,6 +192,9 @@
                         Open PDF File
                     </button>
                     <p class="hint">or drag and drop a PDF file here</p>
+                    <p class="welcome-support">
+                        <a href="#" id="welcome-donate-link">Support this project</a>
+                    </p>
                 </div>
             </div>
 
@@ -813,6 +825,38 @@
                 <div class="modal-footer">
                     <button id="bulk-fill-cancel" class="btn btn-secondary">Cancel</button>
                     <button id="bulk-fill-process" class="btn btn-primary" disabled>Process & Download</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Support Prompt Modal -->
+        <div id="support-prompt-modal" class="modal hidden">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h3>Support PDF Editor</h3>
+                    <button class="modal-close" id="support-prompt-modal-close">&times;</button>
+                </div>
+                <div class="modal-body">
+                    <p>Thanks for using PDF Editor! If you find it helpful, consider supporting the project. Choose one option:</p>
+                    <div class="support-prompt-section">
+                        <div class="support-prompt-label">Time-based</div>
+                        <div class="support-prompt-buttons">
+                            <button type="button" class="btn btn-primary support-donate-btn" data-amount="1" data-mode="time">Donate $1 — 1 week</button>
+                            <button type="button" class="btn btn-primary support-donate-btn" data-amount="5" data-mode="time">Donate $5 — 1 month</button>
+                            <button type="button" class="btn btn-primary support-donate-btn" data-amount="20" data-mode="time">Donate $20 — 6 months</button>
+                        </div>
+                    </div>
+                    <div class="support-prompt-section">
+                        <div class="support-prompt-label">Document-based</div>
+                        <div class="support-prompt-buttons">
+                            <button type="button" class="btn btn-primary support-donate-btn" data-amount="1" data-mode="uses">Donate $1 — 5 downloads/sends</button>
+                            <button type="button" class="btn btn-primary support-donate-btn" data-amount="5" data-mode="uses">Donate $5 — 25 downloads/sends</button>
+                            <button type="button" class="btn btn-primary support-donate-btn" data-amount="20" data-mode="uses">Donate $20 — 100 downloads/sends</button>
+                        </div>
+                    </div>
+                    <div class="support-prompt-skip">
+                        <button type="button" class="btn btn-secondary" id="support-prompt-maybe-later">Skip for now</button>
+                    </div>
                 </div>
             </div>
         </div>

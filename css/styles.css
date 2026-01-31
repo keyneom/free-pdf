@@ -272,6 +272,21 @@ body {
     background: var(--primary-hover);
 }
 
+.welcome-support {
+    margin-top: 20px;
+    font-size: 0.875rem;
+}
+
+.welcome-support a {
+    color: var(--text-secondary);
+    text-decoration: none;
+}
+
+.welcome-support a:hover {
+    color: var(--primary-color);
+    text-decoration: underline;
+}
+
 /* PDF Container */
 .pdf-container {
     display: flex;
@@ -1189,6 +1204,49 @@ body {
     display: flex;
     justify-content: flex-end;
     gap: 10px;
+}
+
+/* Support prompt modal */
+.support-prompt-section {
+    margin-top: 16px;
+}
+
+.support-prompt-section:first-of-type {
+    margin-top: 12px;
+}
+
+.support-prompt-label {
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: var(--text-secondary);
+    margin-bottom: 6px;
+}
+
+.support-prompt-buttons {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.support-prompt-buttons .btn {
+    flex: 1;
+    min-width: 140px;
+}
+
+.support-prompt-skip {
+    margin-top: 16px;
+    padding-top: 12px;
+    border-top: 1px solid var(--border-color);
+}
+
+/* Support link in toolbar (anchor styled as button) */
+.tool-btn.support-link {
+    text-decoration: none;
+    color: var(--text-color);
+}
+
+.tool-btn.support-link:hover {
+    text-decoration: none;
 }
 
 /* Buttons */

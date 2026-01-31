@@ -11,6 +11,13 @@ import { secureStorage } from './secure-storage.js';
 import { BulkFillHandler } from './bulk-fill.js';
 import { parseSigningMetadata, hasOurSigningMetadata, computeDocumentHash } from './signing-metadata.js';
 import { loadFormFieldsFromPdf } from './load-form-fields.js';
+import {
+    isFirstDocumentUsed,
+    markFirstDocumentUsed,
+    isSupportValid,
+    recordSupportDonation,
+    consumeSupportUse
+} from './support-status.js';
 
 function escapeHtml(s) {
     if (s == null) return '';
@@ -68,6 +75,8 @@ class PDFEditorApp {
         this.setupTemplateEditModal();
         this.setupBulkFillModal();
         this.setupExpectedSignersModal();
+        this.setupSupportPromptModal();
+        this.handleSupportReturnOnLoad();
     }
 
     /**
@@ -90,6 +99,7 @@ class PDFEditorApp {
         this.btnSend = document.getElementById('btn-send');
         this.btnTemplates = document.getElementById('btn-templates');
         this.btnBulkFill = document.getElementById('btn-bulk-fill');
+        this.btnDonate = document.getElementById('btn-donate');
         this.btnUndo = document.getElementById('btn-undo');
         this.btnRedo = document.getElementById('btn-redo');
         this.btnDelete = document.getElementById('btn-delete');
@@ -136,6 +146,7 @@ class PDFEditorApp {
         this.templatesModal = document.getElementById('templates-modal');
         this.templateEditModal = document.getElementById('template-edit-modal');
         this.bulkFillModal = document.getElementById('bulk-fill-modal');
+        this.supportPromptModal = document.getElementById('support-prompt-modal');
     }
 
     setupImageInsert() {
@@ -173,11 +184,20 @@ class PDFEditorApp {
         this.btnOpenWelcome.addEventListener('click', () => this.fileInput.click());
         this.fileInput.addEventListener('change', (e) => this.handleFileSelect(e));
 
-        // Save/Export
-        this.btnSave.addEventListener('click', () => this.exportPDF());
+        // Save/Export (gated by support status)
+        this.btnSave.addEventListener('click', () => this.maybeExportPDF());
 
-        // Send / Templates / Bulk Fill
-        this.btnSend?.addEventListener('click', () => this.showSendModal());
+        // Send / Templates / Bulk Fill (send gated by support status)
+        this.btnSend?.addEventListener('click', () => this.maybeShowSendModal());
+
+        // Donate
+        this.btnDonate?.addEventListener('click', () => this.handleDonate());
+
+        // Welcome screen support link
+        document.getElementById('welcome-donate-link')?.addEventListener('click', (e) => {
+            e.preventDefault();
+            this.handleDonate();
+        });
         this.btnTemplates?.addEventListener('click', () => this.showTemplatesModal());
         this.btnBulkFill?.addEventListener('click', async () => this.showBulkFillModal());
 
@@ -3162,6 +3182,8 @@ class PDFEditorApp {
             const result = await this.getExportedPDF();
             if (result) {
                 this.exporter.downloadPDF(result.bytes, result.exportName);
+                markFirstDocumentUsed();
+                consumeSupportUse();
             }
         } catch (error) {
             console.error('Export error:', error);
@@ -3169,6 +3191,30 @@ class PDFEditorApp {
         } finally {
             this.hideLoading();
         }
+    }
+
+    /**
+     * Check support status; if expired, show support prompt. Otherwise export.
+     */
+    maybeExportPDF() {
+        if (!this.pdfHandler.isLoaded()) return;
+        if (!isFirstDocumentUsed() || isSupportValid()) {
+            this.exportPDF();
+            return;
+        }
+        this.showSupportPromptModal('download', () => this.exportPDF());
+    }
+
+    /**
+     * Check support status; if expired, show support prompt. Otherwise show send modal.
+     */
+    maybeShowSendModal() {
+        if (!this.pdfHandler.isLoaded()) return;
+        if (!isFirstDocumentUsed() || isSupportValid()) {
+            this.showSendModal();
+            return;
+        }
+        this.showSupportPromptModal('send', () => this.showSendModal());
     }
 
     /**
@@ -3259,6 +3305,8 @@ class PDFEditorApp {
             if (ccVal) mailto += `&cc=${encodeURIComponent(ccVal)}`;
             if (bccVal) mailto += `&bcc=${encodeURIComponent(bccVal)}`;
             window.location.href = mailto;
+            markFirstDocumentUsed();
+            consumeSupportUse();
             this.hideSendModal();
         } catch (error) {
             console.error('Send error:', error);
@@ -4097,6 +4145,120 @@ class PDFEditorApp {
         modal?.addEventListener('click', (e) => {
             if (e.target === modal) this.hideSendModal();
         });
+    }
+
+    /**
+     * Support prompt modal: ask for donation before download/send when expired.
+     * @param {'download'|'send'} pendingAction
+     * @param {() => void} onProceed - callback when user proceeds (Maybe later or after donation)
+     */
+    setupSupportPromptModal() {
+        const modal = this.supportPromptModal;
+        if (!modal) return;
+
+        const closeBtn = document.getElementById('support-prompt-modal-close');
+        const maybeLaterBtn = document.getElementById('support-prompt-maybe-later');
+        const donateBtns = modal.querySelectorAll('.support-donate-btn');
+
+        this._supportPromptOnProceed = null;
+        this._supportPromptPendingAction = null;
+
+        closeBtn?.addEventListener('click', () => this.hideSupportPromptModal());
+        maybeLaterBtn?.addEventListener('click', () => {
+            const fn = this._supportPromptOnProceed;
+            this.hideSupportPromptModal();
+            if (fn) fn();
+        });
+
+        donateBtns.forEach((btn) => {
+            btn.addEventListener('click', () => {
+                const amount = parseInt(btn.dataset.amount || '5', 10);
+                const mode = btn.dataset.mode === 'uses' ? 'uses' : 'time';
+                const actionType = this._supportPromptPendingActionType;
+                if (actionType) sessionStorage.setItem('freePdfPendingSupportAction', actionType);
+                this.handleDonate(amount, mode);
+                this.hideSupportPromptModal();
+            });
+        });
+
+        modal?.addEventListener('click', (e) => {
+            if (e.target === modal) this.hideSupportPromptModal();
+        });
+    }
+
+    showSupportPromptModal(pendingAction, onProceed) {
+        this._supportPromptOnProceed = onProceed;
+        this._supportPromptPendingActionType = pendingAction; // 'download' | 'send'
+        this.supportPromptModal?.classList.remove('hidden');
+    }
+
+    hideSupportPromptModal() {
+        this._supportPromptOnProceed = null;
+        this._supportPromptPendingActionType = null;
+        this.supportPromptModal?.classList.add('hidden');
+    }
+
+    /**
+     * Open p2pago donation flow.
+     * @param {number} [amountUsd] - default 5 for toolbar button
+     * @param {'time'|'uses'} [mode] - 'time' or 'uses' for support-prompt flow; omit for toolbar donate
+     */
+    handleDonate(amountUsd, mode) {
+        const sdk = typeof window !== 'undefined' ? window.Zkp2pDonate : null;
+        if (!sdk?.openDonation) {
+            alert('Donation feature is temporarily unavailable.');
+            return;
+        }
+
+        const amount = amountUsd ?? 5;
+        const baseUrl = (window.location.origin + window.location.pathname).replace(/\/$/, '') || window.location.origin;
+        const modeParam = mode ? `&mode=${mode}` : '';
+        const callbackUrl = `${baseUrl}?support_return=1&amount=${amount}${modeParam}`;
+
+        try {
+            sdk.openDonation({
+                recipientAddress: 'p2pago.fkey.id',
+                amountUsd: amount,
+                callbackUrl,
+                openInstallPageIfMissing: true,
+                referrer: 'free-pdf',
+                // Base USDC — better for small donations; batch swap to ETH on CowSwap etc. for lower fees
+                toToken: '8453:0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
+                onSmallAmountWarning: amount < 2 ? (msg) => { alert(msg); return confirm('Continue?'); } : undefined
+            });
+        } catch (err) {
+            console.error('Donation error:', err);
+            alert('Could not open donation flow. You may need to install the Peer extension for Venmo/Cash App.');
+        }
+    }
+
+    /**
+     * On load: check for ?support_return=1&amount=X from donation callback.
+     */
+    handleSupportReturnOnLoad() {
+        const params = new URLSearchParams(window.location.search);
+        const supportReturn = params.get('support_return');
+        const amount = params.get('amount');
+        if (supportReturn !== '1' || !amount) return;
+
+        const amountNum = parseInt(amount, 10) || 1;
+        const mode = params.get('mode') === 'uses' ? 'uses' : 'time';
+        recordSupportDonation(amountNum, mode);
+
+        const pending = sessionStorage.getItem('freePdfPendingSupportAction');
+        sessionStorage.removeItem('freePdfPendingSupportAction');
+
+        // Clean URL
+        const cleanUrl = window.location.origin + window.location.pathname;
+        window.history.replaceState({}, document.title, cleanUrl);
+
+        // Optionally run pending action (if document still loaded after return)
+        if (pending === 'download' && this.pdfHandler?.isLoaded()) {
+            this.exportPDF();
+        } else if (pending === 'send' && this.pdfHandler?.isLoaded()) {
+            this.showSendModal();
+        }
+        // If no doc loaded, user can click Download/Send again; support is now valid
     }
 
     showTemplatesModal() {
