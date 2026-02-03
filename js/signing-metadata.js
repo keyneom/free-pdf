@@ -115,7 +115,7 @@ export function buildSigningKeywords(payload) {
 export function hasOurSigningMetadata(metadata) {
     const info = metadata?.info || {};
     if (typeof info.Keywords === 'string' && info.Keywords.startsWith(PREFIX)) return true;
-    if (typeof info.Producer === 'string' && info.Producer.includes('Free PDF Editor')) return true;
+    if (typeof info.Producer === 'string' && info.Producer.includes('PDF Editor')) return true;
     return false;
 }
 

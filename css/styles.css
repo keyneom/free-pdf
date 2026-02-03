@@ -1206,37 +1206,55 @@ body {
     gap: 10px;
 }
 
-/* Support prompt modal */
-.support-prompt-section {
-    margin-top: 16px;
+/* Pay to use prompt modal */
+.support-prompt-intro {
+    margin-bottom: 16px;
 }
 
-.support-prompt-section:first-of-type {
-    margin-top: 12px;
-}
-
-.support-prompt-label {
-    font-size: 0.8rem;
-    font-weight: 600;
-    color: var(--text-secondary);
-    margin-bottom: 6px;
-}
-
-.support-prompt-buttons {
+.support-prompt-amount-row {
     display: flex;
-    flex-wrap: wrap;
-    gap: 8px;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 16px;
 }
 
-.support-prompt-buttons .btn {
-    flex: 1;
-    min-width: 140px;
+.support-prompt-amount-row label {
+    font-weight: 500;
+}
+
+.support-prompt-amount-input {
+    width: 80px;
+    padding: 8px 12px;
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    font-size: 1rem;
+}
+
+.support-prompt-options {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.support-prompt-options .btn {
+    justify-content: center;
 }
 
 .support-prompt-skip {
     margin-top: 16px;
     padding-top: 12px;
-    border-top: 1px solid var(--border-color);
+    text-align: center;
+}
+
+.support-prompt-skip a {
+    font-size: 0.875rem;
+    color: var(--text-secondary);
+    text-decoration: none;
+}
+
+.support-prompt-skip a:hover {
+    color: var(--text-color);
+    text-decoration: underline;
 }
 
 /* Support link in toolbar (anchor styled as button) */
@@ -1699,6 +1717,23 @@ label.btn {
     background: #fff3cd;
     border-radius: var(--radius-md);
     border: 2px solid #ffc107;
+}
+
+.send-attach-alert {
+    font-size: 0.875rem;
+    color: var(--text-color);
+    line-height: 1.6;
+    margin: 16px 0 0;
+    padding: 14px 16px;
+    background: #fff3cd;
+    border-radius: var(--radius-md);
+    border: 2px solid #e6a800;
+    font-weight: 500;
+}
+
+.send-attach-alert #send-attach-filename {
+    font-family: var(--mono-font, ui-monospace, monospace);
+    font-weight: 700;
 }
 
 .send-protocol-help {

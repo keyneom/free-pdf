@@ -71,8 +71,8 @@ export class PDFExporter {
             }
 
             pdfDoc.setModificationDate(new Date());
-            pdfDoc.setProducer('Free PDF Editor');
-            pdfDoc.setCreator('Free PDF Editor');
+            pdfDoc.setProducer('PDF Editor');
+            pdfDoc.setCreator('PDF Editor');
             return await pdfDoc.save();
         }
 
@@ -161,8 +161,8 @@ export class PDFExporter {
         if (kwArray) outDoc.setKeywords(kwArray);
 
         outDoc.setModificationDate(new Date());
-        outDoc.setProducer('Free PDF Editor');
-        outDoc.setCreator('Free PDF Editor');
+        outDoc.setProducer('PDF Editor');
+        outDoc.setCreator('PDF Editor');
 
         // Ensure form field appearances are generated for viewer compatibility
         // This is CRITICAL - without it, form fields won't be recognized by many PDF viewers

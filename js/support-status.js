@@ -1,23 +1,11 @@
 /**
  * Support status: first document free, then time-based OR use-based expiration.
  * User chooses one: either time period OR document uses, not both.
- * Tier: $1=7d or 5 uses, $5=30d or 25 uses, $20=180d or 100 uses
+ * Amount scales: $1 = 7 days or 5 uses, scales linearly (e.g. $5 = 35 days or 25 uses)
  */
 
 const KEY_FIRST_USED = 'freePdfFirstDocumentUsed';
 const KEY_SUPPORT = 'freePdfSupportStatus';
-
-const TIER_DAYS = {
-    1: 7,
-    5: 30,
-    20: 180
-};
-
-const TIER_USES = {
-    1: 5,
-    5: 25,
-    20: 100
-};
 
 /** @typedef {'time'|'uses'} SupportMode */
 
@@ -42,29 +30,49 @@ export function markFirstDocumentUsed() {
 }
 
 /**
- * @param {number} amountUsd - 1, 5, or 20
- * @returns {number} duration in days
+ * Format days as human-readable string (e.g. "1 week", "2 weeks", "1 month").
+ * @param {number} days
+ * @returns {string}
+ */
+export function formatDuration(days) {
+    const d = Math.max(1, Math.floor(days));
+    if (d >= 30) {
+        const months = Math.floor(d / 30);
+        return months === 1 ? '1 month' : `${months} months`;
+    }
+    if (d >= 7) {
+        const weeks = Math.floor(d / 7);
+        return weeks === 1 ? '1 week' : `${weeks} weeks`;
+    }
+    return d === 1 ? '1 day' : `${d} days`;
+}
+
+/**
+ * @param {number} amountUsd - any positive amount
+ * @returns {number} duration in days (~7 per dollar)
  */
 export function getDurationDaysForAmount(amountUsd) {
-    return TIER_DAYS[amountUsd] ?? 7;
+    const amt = Math.max(0, Number(amountUsd) || 0);
+    return Math.max(1, Math.floor(amt * 7));
 }
 
 /**
- * @param {number} amountUsd - 1, 5, or 20
- * @returns {number} number of download/send uses
+ * @param {number} amountUsd - any positive amount
+ * @returns {number} number of download/send uses (~5 per dollar)
  */
 export function getUsesForAmount(amountUsd) {
-    return TIER_USES[amountUsd] ?? 5;
+    const amt = Math.max(0, Number(amountUsd) || 0);
+    return Math.max(1, Math.floor(amt * 5));
 }
 
 /**
- * Record a donation (call when user returns from donation flow).
- * @param {number} amountUsd - 1, 5, or 20
+ * Record a payment (call when user returns from payment flow).
+ * @param {number} amountUsd - any positive amount
  * @param {SupportMode} mode - 'time' (duration only) or 'uses' (download/send count only)
  */
 export function recordSupportDonation(amountUsd, mode = 'time') {
     try {
-        const amt = Number(amountUsd) || 1;
+        const amt = Math.max(0.5, Number(amountUsd) || 1);
         const data = {
             lastDonationAt: Date.now(),
             amountUsd: amt,

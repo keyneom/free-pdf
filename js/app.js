@@ -17,7 +17,10 @@ import {
     markFirstDocumentUsed,
     isSupportValid,
     recordSupportDonation,
-    consumeSupportUse
+    consumeSupportUse,
+    getDurationDaysForAmount,
+    getUsesForAmount,
+    formatDuration
 } from './support-status.js';
 
 function escapeHtml(s) {
@@ -3333,6 +3336,12 @@ class PDFEditorApp {
             return;
         }
 
+        const baseName = (this.fileName || '').replace(/\.pdf$/i, '').trim();
+        const hasRealFilename = baseName && baseName !== 'document';
+        const exportName = hasRealFilename ? `${baseName}-edited.pdf` : 'document.pdf';
+        const ackMsg = `You must attach the downloaded file "${exportName}" to the email before sending. Click OK to download the PDF and open your email app.`;
+        alert(ackMsg);
+
         this.showLoading('Preparing email...');
         try {
             this._syncSignerEmailsFromSendModal();
@@ -3500,6 +3509,9 @@ class PDFEditorApp {
         const sendBcc = document.getElementById('send-bcc');
         if (sendCc) sendCc.value = (this.getCompletionCcEmails() || []).join(', ');
         if (sendBcc) sendBcc.value = (this.getCompletionBccEmails() || []).join(', ');
+
+        const attachFilenameEl = document.getElementById('send-attach-filename');
+        if (attachFilenameEl) attachFilenameEl.textContent = exportName;
     }
 
     getUnfilledSignatureFields() {
@@ -4265,26 +4277,41 @@ class PDFEditorApp {
         if (!modal) return;
 
         const closeBtn = document.getElementById('support-prompt-modal-close');
-        const maybeLaterBtn = document.getElementById('support-prompt-maybe-later');
-        const donateBtns = modal.querySelectorAll('.support-donate-btn');
+        const amountInput = document.getElementById('support-prompt-amount');
+        const timeLabel = document.getElementById('support-time-label');
+        const usesLabel = document.getElementById('support-uses-label');
+        const payTimeBtn = document.getElementById('support-pay-time');
+        const payUsesBtn = document.getElementById('support-pay-uses');
+        const skipLink = document.getElementById('support-prompt-skip-link');
 
         this._supportPromptOnProceed = null;
-        this._supportPromptPendingAction = null;
+        this._supportPromptPendingActionType = null;
+
+        const updateLabels = () => {
+            const amt = Math.max(0.5, parseFloat(amountInput?.value || '1') || 1);
+            if (timeLabel) timeLabel.textContent = formatDuration(getDurationDaysForAmount(amt));
+            if (usesLabel) usesLabel.textContent = String(getUsesForAmount(amt));
+        };
+
+        amountInput?.addEventListener('input', updateLabels);
+        amountInput?.addEventListener('change', updateLabels);
 
         closeBtn?.addEventListener('click', () => this.hideSupportPromptModal());
-        maybeLaterBtn?.addEventListener('click', () => {
+        skipLink?.addEventListener('click', (e) => {
+            e.preventDefault();
             const fn = this._supportPromptOnProceed;
             this.hideSupportPromptModal();
             if (fn) fn();
         });
 
-        donateBtns.forEach((btn) => {
+        [payTimeBtn, payUsesBtn].forEach((btn) => {
+            if (!btn) return;
             btn.addEventListener('click', () => {
-                const amount = parseInt(btn.dataset.amount || '5', 10);
+                const amt = Math.max(0.5, parseFloat(amountInput?.value || '1') || 1);
                 const mode = btn.dataset.mode === 'uses' ? 'uses' : 'time';
                 const actionType = this._supportPromptPendingActionType;
                 if (actionType) sessionStorage.setItem('freePdfPendingSupportAction', actionType);
-                this.handleDonate(amount, mode);
+                this.handleDonate(amt, mode);
                 this.hideSupportPromptModal();
             });
         });
@@ -4296,7 +4323,13 @@ class PDFEditorApp {
 
     showSupportPromptModal(pendingAction, onProceed) {
         this._supportPromptOnProceed = onProceed;
-        this._supportPromptPendingActionType = pendingAction; // 'download' | 'send'
+        this._supportPromptPendingActionType = pendingAction;
+        const amountInput = document.getElementById('support-prompt-amount');
+        if (amountInput) amountInput.value = '1';
+        const timeLabel = document.getElementById('support-time-label');
+        const usesLabel = document.getElementById('support-uses-label');
+        if (timeLabel) timeLabel.textContent = formatDuration(getDurationDaysForAmount(1));
+        if (usesLabel) usesLabel.textContent = String(getUsesForAmount(1));
         this.supportPromptModal?.classList.remove('hidden');
     }
 
@@ -4349,7 +4382,7 @@ class PDFEditorApp {
         const amount = params.get('amount');
         if (supportReturn !== '1' || !amount) return;
 
-        const amountNum = parseInt(amount, 10) || 1;
+        const amountNum = Math.max(0.5, parseFloat(amount) || 1);
         const mode = params.get('mode') === 'uses' ? 'uses' : 'time';
         recordSupportDonation(amountNum, mode);
 
