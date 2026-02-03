@@ -452,10 +452,17 @@
                         <label for="send-body">Body</label>
                         <textarea id="send-body" class="send-textarea" rows="10" placeholder="Email body"></textarea>
                     </div>
-                    <div class="send-field">
-                        <label for="send-to">To</label>
-                        <input type="text" id="send-to" class="send-input" placeholder="recipient@example.com or comma-separated">
-                        <p id="send-to-hint" class="send-to-hint"></p>
+                    <div id="send-recipients-section">
+                        <div id="send-signers-section" class="send-signers-section hidden">
+                            <h4 class="send-signers-title">Who to send to (map each signer to their email)</h4>
+                            <p class="send-signers-hint">The first signer is emailed first; they forward to the next. These are saved in the document for the signing flow.</p>
+                            <div id="send-signers-list" class="send-signers-list"></div>
+                        </div>
+                        <div id="send-to-section" class="send-field hidden">
+                            <label for="send-to">To</label>
+                            <input type="text" id="send-to" class="send-input" placeholder="recipient@example.com or comma-separated">
+                            <p id="send-to-hint" class="send-to-hint">Enter recipient email(s). Leave empty to add in your email client.</p>
+                        </div>
                     </div>
                     <div class="send-field">
                         <label for="send-cc">CC (optional)</label>

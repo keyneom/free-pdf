@@ -11,6 +11,7 @@ import { secureStorage } from './secure-storage.js';
 import { BulkFillHandler } from './bulk-fill.js';
 import { parseSigningMetadata, hasOurSigningMetadata, computeDocumentHash } from './signing-metadata.js';
 import { loadFormFieldsFromPdf } from './load-form-fields.js';
+import { toast } from './toast.js';
 import {
     isFirstDocumentUsed,
     markFirstDocumentUsed,
@@ -308,7 +309,7 @@ class PDFEditorApp {
                 await this.appendPdfFile(file);
             } catch (err) {
                 console.error('Append PDF failed:', err);
-                alert('Failed to append PDF: ' + (err.message || err));
+                toast.error('Failed to append PDF: ' + (err.message || err));
             } finally {
                 this.pagesAppendInput.value = '';
             }
@@ -726,6 +727,33 @@ class PDFEditorApp {
             const rectB = b.object?.getBoundingRect?.() ?? { top: 0, left: 0 };
             if (Math.abs(rectA.top - rectB.top) > 8) return rectA.top - rectB.top;
             return rectA.left - rectB.left;
+        });
+
+        // Add synthetic signature-filled entries for signed fields from PDF metadata (no canvas object - image is in base PDF)
+        const locked = this.signingFlowMeta?.lockedSignatureFields || [];
+        const signers = this.signingFlowMeta?.signers || [];
+        const canvasLabels = new Set(allFields.filter((f) => f.signatureFieldLabel).map((f) => (f.signatureFieldLabel || '').toLowerCase()));
+        const firstPageId = this.viewPages?.[0]?.id || '';
+        locked.forEach((label, i) => {
+            const lb = (label || '').trim();
+            if (!lb || canvasLabels.has(lb.toLowerCase())) return;
+            const signer = signers[i] || {};
+            allFields.push({
+                type: 'signature-filled',
+                fieldName: '',
+                fieldValue: '',
+                checked: false,
+                selectedOption: '',
+                signatureFieldLabel: lb,
+                signerName: signer.name || signer.n || '',
+                signedAt: signer.timestamp || signer.t || '',
+                pageNum: 1,
+                pageId: firstPageId,
+                object: null,
+                locked: true,
+                permanentlyLocked: this.lockedFromFile?.signatures?.has(lb) ?? false,
+                _synthetic: true
+            });
         });
 
         // Render fields
@@ -1478,7 +1506,7 @@ class PDFEditorApp {
                 const isEditingCanvasText =
                     !!(activeCanvas && activeCanvas.getActiveObject()?.isEditing);
 
-                if (!isTypingInInput && !isEditingCanvasText) {
+                if (!isTypingInInput && !isEditingCanvasText && e.key) {
                     switch (e.key.toLowerCase()) {
                         case 'v':
                             this.selectToolByName('select');
@@ -1500,7 +1528,7 @@ class PDFEditorApp {
             }
 
             // Escape = Cancel current action
-            if (e.key === 'Escape') {
+            if (e.key && e.key === 'Escape') {
                 this.canvasManager.setTool('select');
                 this.selectToolByName('select');
             }
@@ -1533,7 +1561,7 @@ class PDFEditorApp {
      */
     async loadFile(file) {
         if (file.type !== 'application/pdf') {
-            alert('Please select a PDF file.');
+            toast.warning('Please select a PDF file.');
             return;
         }
 
@@ -1639,7 +1667,7 @@ class PDFEditorApp {
             this.hideLoading();
         } catch (error) {
             console.error('Error loading PDF:', error);
-            alert('Error loading PDF: ' + error.message);
+            toast.error('Error loading PDF: ' + error.message);
             this.hideLoading();
         }
     }
@@ -1738,9 +1766,33 @@ class PDFEditorApp {
             this.hideToolHint();
             fieldsSidebar?.classList.add('hidden');
         }
-        
+
+        // Pages sidebar: in Fill mode, hide edit actions (append, delete, extract, split, rotate, reorder)
+        this.updatePagesSidebarForMode();
+
         // Switch to select tool
         this.selectToolByName('select');
+    }
+
+    /**
+     * Update pages sidebar for current mode. In Fill mode, hide structural actions (append, delete, extract, split, rotate, reorder).
+     */
+    updatePagesSidebarForMode() {
+        const isFill = this.mode === 'fill';
+        const actionsEl = this.pagesSidebar?.querySelector('.pages-sidebar-actions');
+        const toolbarEl = this.pagesSidebar?.querySelector('.pages-sidebar-toolbar');
+        const footerEl = this.pagesSidebar?.querySelector('.pages-sidebar-footer');
+        const hintEl = footerEl?.querySelector('.pages-hint');
+
+        if (actionsEl) actionsEl.classList.toggle('hidden', isFill);
+        if (toolbarEl) toolbarEl.classList.toggle('hidden', isFill);
+        if (hintEl) hintEl.textContent = isFill ? 'Click a page to go to it.' : 'Drag to reorder. Select pages to delete/extract/rotate.';
+
+        this.pagesList?.querySelectorAll('.page-thumb').forEach((item) => {
+            item.draggable = !isFill;
+            const cb = item.querySelector('.page-thumb-cb');
+            if (cb) cb.classList.toggle('hidden', isFill);
+        });
     }
 
     /**
@@ -2087,6 +2139,7 @@ class PDFEditorApp {
             const handleDrop = (ev) => {
                 ev.preventDefault();
                 ev.stopPropagation();
+                if (this.mode === 'fill') return;
                 const fromId = ev.dataTransfer.getData('text/plain') || ev.dataTransfer.getData('application/x-page-id');
                 const toId = pageId;
                 if (!fromId || fromId === toId) return;
@@ -2381,7 +2434,7 @@ class PDFEditorApp {
         if (!input) return;
         const ranges = this.parsePageRanges(input, total);
         if (ranges.length === 0) {
-            alert('No valid ranges.');
+            toast.warning('No valid ranges.');
             return;
         }
 
@@ -2577,7 +2630,7 @@ class PDFEditorApp {
         const saveBtn = document.getElementById('sig-save-btn');
         saveBtn?.addEventListener('click', async () => {
             const name = (saveName?.value || '').trim();
-            if (!name) { alert('Enter a name for this signature.'); return; }
+            if (!name) { toast.warning('Enter a name for this signature.'); return; }
             const dataUrl = this._signatureDataUrlForSave();
             if (!dataUrl) return;
             const type = this._activeSignatureTab() === 'image' ? 'image' : (this.signaturePad.mode === 'type' ? 'type' : 'draw');
@@ -2586,7 +2639,7 @@ class PDFEditorApp {
                 if (saveName) saveName.value = '';
                 this._refreshSignatureModalExtras();
             } catch (e) {
-                alert('Failed to save: ' + (e instanceof Error ? e.message : String(e)));
+                toast.error('Failed to save: ' + (e instanceof Error ? e.message : String(e)));
             }
         });
 
@@ -2845,7 +2898,7 @@ class PDFEditorApp {
                 this.refreshFieldsSidebar();
                 return true;
             } else {
-                alert('No matching signature field found for this signer. Please ensure the document has a signature field with your name or contact the sender.');
+                toast.warning('No matching signature field found for this signer. Please ensure the document has a signature field with your name or contact the sender.');
                 return false;
             }
         }
@@ -3187,7 +3240,7 @@ class PDFEditorApp {
             }
         } catch (error) {
             console.error('Export error:', error);
-            alert('Error exporting PDF: ' + error.message);
+            toast.error('Error exporting PDF: ' + error.message);
         } finally {
             this.hideLoading();
         }
@@ -3276,13 +3329,13 @@ class PDFEditorApp {
         const subject = (subjectEl.value || '').trim();
         const body = (bodyEl.value || '').trim();
         if (!subject || !body) {
-            alert('Please provide a subject and body.');
+            toast.warning('Please provide a subject and body.');
             return;
         }
 
         this.showLoading('Preparing email...');
         try {
-            // Attach full template to document so it follows the doc across machines (saved in PDF Keywords)
+            this._syncSignerEmailsFromSendModal();
             if (!this.signingFlowMeta) this.signingFlowMeta = { signers: [], expectedSigners: [] };
             if (!isDocTemplate) this.signingFlowMeta.emailTemplate = { subject: tpl.subject, body: tpl.body };
             const result = await this.getExportedPDF();
@@ -3293,9 +3346,10 @@ class PDFEditorApp {
             this.exporter.downloadPDF(result.bytes, result.exportName);
             const ctx = this.buildEmailContext(result.exportName);
             const filled = emailTemplates.fill({ subject, body }, ctx);
-            const toEl = document.getElementById('send-to');
-            const toVal = (toEl?.value || '').trim();
-            const toEmails = toVal ? toVal.split(/[\s,]+/).map((e) => e.trim()).filter(Boolean) : [];
+            const unfilledSigners = this.getUnfilledSignatureFields();
+            const toEmails = unfilledSigners.length > 0
+                ? this.getSendToEmails()
+                : ((document.getElementById('send-to')?.value || '').trim().split(/[\s,]+/).map((e) => e.trim()).filter(Boolean));
             const toPart = toEmails.length > 0 ? encodeURIComponent(toEmails.join(',')) + '?' : '?';
             const ccEl = document.getElementById('send-cc');
             const bccEl = document.getElementById('send-bcc');
@@ -3310,7 +3364,7 @@ class PDFEditorApp {
             this.hideSendModal();
         } catch (error) {
             console.error('Send error:', error);
-            alert('Error preparing email: ' + error.message);
+            toast.error('Error preparing email: ' + error.message);
         } finally {
             this.hideLoading();
         }
@@ -3404,22 +3458,76 @@ class PDFEditorApp {
             bodyEl.value = filled.body;
         }
 
-        // Pre-fill To from signing flow (first signer for initial send, completion emails when done)
-        const suggestedTo = this.getSendToEmails();
+        // Recipients: either signer→email inputs (when unfilled signers) OR single To field (when none)
+        const signersSection = document.getElementById('send-signers-section');
+        const toSection = document.getElementById('send-to-section');
+        const signersList = document.getElementById('send-signers-list');
         const sendToEl = document.getElementById('send-to');
-        if (sendToEl) {
-            sendToEl.value = suggestedTo.join(', ');
+        const unfilledSigners = this.getUnfilledSignatureFields();
+
+        if (unfilledSigners.length > 0) {
+            signersSection?.classList.remove('hidden');
+            toSection?.classList.add('hidden');
+            const expected = this.signingFlowMeta?.expectedSigners || [];
+            if (signersList) {
+                signersList.innerHTML = unfilledSigners.map(({ label }) => {
+                    const entry = expected.find((e) => (e.name || '').trim().toLowerCase() === (label || '').trim().toLowerCase());
+                    const email = (entry?.email || '').trim();
+                    return `
+                        <div class="send-signers-row" data-label="${escapeHtml(label || '')}">
+                            <label>${escapeHtml(label || 'Signature')}</label>
+                            <input type="email" class="send-input send-signer-email" placeholder="email@example.com" value="${escapeHtml(email)}">
+                        </div>
+                    `;
+                }).join('');
+                signersList.querySelectorAll('.send-signer-email').forEach((input) => {
+                    input.addEventListener('change', () => this._syncSignerEmailsFromSendModal());
+                    input.addEventListener('blur', () => this._syncSignerEmailsFromSendModal());
+                });
+            }
+        } else {
+            signersSection?.classList.add('hidden');
+            toSection?.classList.remove('hidden');
+            const suggestedTo = this.getSendToEmails();
+            if (sendToEl) sendToEl.value = suggestedTo.join(', ');
             if (sendToHint) {
                 sendToHint.textContent = suggestedTo.length > 0
-                    ? 'Pre-filled from signing flow. You can edit.'
+                    ? 'Pre-filled for completion flow. You can edit.'
                     : 'Enter recipient email(s). Leave empty to add in your email client.';
-                sendToHint.classList.remove('hidden');
             }
         }
         const sendCc = document.getElementById('send-cc');
         const sendBcc = document.getElementById('send-bcc');
         if (sendCc) sendCc.value = (this.getCompletionCcEmails() || []).join(', ');
         if (sendBcc) sendBcc.value = (this.getCompletionBccEmails() || []).join(', ');
+    }
+
+    getUnfilledSignatureFields() {
+        const result = [];
+        const annotations = this.canvasManager.getAllAnnotations?.() || [];
+        annotations.forEach((pageData) => {
+            (pageData.annotations || []).forEach((ann) => {
+                if (ann.type === 'signature-field' && ann.data?._signatureFieldLabel) {
+                    result.push({ label: ann.data._signatureFieldLabel.trim() || 'Signature' });
+                }
+            });
+        });
+        return result;
+    }
+
+    _syncSignerEmailsFromSendModal() {
+        const list = document.getElementById('send-signers-list');
+        if (!list) return;
+        const rows = list.querySelectorAll('.send-signers-row');
+        const entries = [];
+        rows.forEach((row) => {
+            const label = row.dataset.label || '';
+            const input = row.querySelector('.send-signer-email');
+            const email = (input?.value || '').trim();
+            if (label) entries.push({ name: label, email, order: entries.length + 1 });
+        });
+        if (!this.signingFlowMeta) this.signingFlowMeta = { signers: [], expectedSigners: [] };
+        this.signingFlowMeta.expectedSigners = entries;
     }
 
     showSendModal() {
@@ -3759,7 +3867,7 @@ class PDFEditorApp {
                 document.body.removeChild(a);
                 URL.revokeObjectURL(url);
             } catch (e) {
-                alert('Export failed: ' + (e instanceof Error ? e.message : String(e)));
+                toast.error('Export failed: ' + (e instanceof Error ? e.message : String(e)));
             }
         });
 
@@ -3779,13 +3887,13 @@ class PDFEditorApp {
                 document.body.removeChild(a);
                 URL.revokeObjectURL(url);
             } catch (e) {
-                alert('Export failed: ' + (e instanceof Error ? e.message : String(e)));
+                toast.error('Export failed: ' + (e instanceof Error ? e.message : String(e)));
             }
         });
 
         vaultTransferQrBtn?.addEventListener('click', () => {
             if (typeof QRCode === 'undefined') {
-                alert('QR code library not loaded.');
+                toast.error('QR code library not loaded.');
                 return;
             }
             try {
@@ -3812,7 +3920,7 @@ class PDFEditorApp {
                     showChunk();
                 }, 2000);
             } catch (e) {
-                alert('Transfer failed: ' + (e instanceof Error ? e.message : String(e)));
+                toast.error('Transfer failed: ' + (e instanceof Error ? e.message : String(e)));
             }
         });
 
@@ -3822,9 +3930,9 @@ class PDFEditorApp {
                 const jsonStr = JSON.stringify(data);
                 const b64 = btoa(unescape(encodeURIComponent(jsonStr)));
                 await navigator.clipboard.writeText(b64);
-                alert('Vault data copied to clipboard. Paste it on the other device in “Paste transfer data”.');
+                toast.success('Vault data copied to clipboard. Paste it on the other device in "Paste transfer data".');
             } catch (e) {
-                alert('Copy failed: ' + (e instanceof Error ? e.message : String(e)));
+                toast.error('Copy failed: ' + (e instanceof Error ? e.message : String(e)));
             }
         });
 
@@ -3837,7 +3945,7 @@ class PDFEditorApp {
 
         vaultReceiveBtn?.addEventListener('click', async () => {
             if (typeof jsQR === 'undefined') {
-                alert('QR scanner not loaded.');
+                toast.error('QR scanner not loaded.');
                 return;
             }
             try {
@@ -3918,7 +4026,7 @@ class PDFEditorApp {
                 tick();
             } catch (e) {
                 vaultReceivePanel?.classList.add('hidden');
-                alert('Camera failed: ' + (e instanceof Error ? e.message : String(e)));
+                toast.error('Camera failed: ' + (e instanceof Error ? e.message : String(e)));
             }
         });
 
@@ -3999,7 +4107,7 @@ class PDFEditorApp {
                 hideVaultModal();
                 refreshVaultModalState();
             } catch (e) {
-                alert('Delete failed: ' + (e instanceof Error ? e.message : String(e)));
+                toast.error('Delete failed: ' + (e instanceof Error ? e.message : String(e)));
             }
         });
 
@@ -4016,7 +4124,7 @@ class PDFEditorApp {
                 vaultImportError?.classList.add('hidden');
                 vaultImportReplaceBtn?.classList.toggle('hidden', !secureStorage.isUnlocked());
             } catch (err) {
-                alert('Invalid file: ' + (err instanceof Error ? err.message : String(err)));
+                toast.error('Invalid file: ' + (err instanceof Error ? err.message : String(err)));
             }
             e.target.value = '';
         });
@@ -4029,7 +4137,7 @@ class PDFEditorApp {
                 const data = JSON.parse(text);
                 if (!data.templates || !Array.isArray(data.templates)) throw new Error('Invalid backup file: missing templates.');
                 if (secureStorage.hasVault() && !secureStorage.isUnlocked()) {
-                    alert('Unlock a vault to import. Plain backup includes templates and signatures.');
+                    toast.warning('Unlock a vault to import. Plain backup includes templates and signatures.');
                     e.target.value = '';
                     return;
                 }
@@ -4038,12 +4146,12 @@ class PDFEditorApp {
                 if (secureStorage.isUnlocked() && Array.isArray(data.signatures) && data.signatures.length > 0) {
                     await secureStorage.setSignatures(data.signatures);
                 }
-                if (errors.length > 0) alert('Imported with notes: ' + errors.join(' '));
-                else alert(`Imported ${imported} template(s)` + (secureStorage.isUnlocked() && data.signatures?.length ? ` and ${data.signatures.length} signature(s).` : '.'));
+                if (errors.length > 0) toast.warning('Imported with notes: ' + errors.join(' '));
+                else toast.success(`Imported ${imported} template(s)` + (secureStorage.isUnlocked() && data.signatures?.length ? ` and ${data.signatures.length} signature(s).` : '.'));
                 refreshVaultModalState();
                 this.renderTemplatesList();
             } catch (err) {
-                alert('Import failed: ' + (err instanceof Error ? err.message : String(err)));
+                toast.error('Import failed: ' + (err instanceof Error ? err.message : String(err)));
             }
             e.target.value = '';
         });
@@ -4206,7 +4314,7 @@ class PDFEditorApp {
     handleDonate(amountUsd, mode) {
         const sdk = typeof window !== 'undefined' ? window.Zkp2pDonate : null;
         if (!sdk?.openDonation) {
-            alert('Donation feature is temporarily unavailable.');
+            toast.warning('Donation feature is temporarily unavailable.');
             return;
         }
 
@@ -4224,11 +4332,11 @@ class PDFEditorApp {
                 referrer: 'free-pdf',
                 // Base USDC — better for small donations; batch swap to ETH on CowSwap etc. for lower fees
                 toToken: '8453:0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
-                onSmallAmountWarning: amount < 2 ? (msg) => { alert(msg); return confirm('Continue?'); } : undefined
+                onSmallAmountWarning: amount < 2 ? (msg) => { toast.warning(msg); return confirm('Continue?'); } : undefined
             });
         } catch (err) {
             console.error('Donation error:', err);
-            alert('Could not open donation flow. You may need to install the Peer extension for Venmo/Cash App.');
+            toast.error('Could not open donation flow. You may need to install the Peer extension for Venmo/Cash App.');
         }
     }
 
@@ -4350,7 +4458,7 @@ class PDFEditorApp {
         const body = bodyEl?.value || '';
 
         if (!name) {
-            alert('Please enter a template name.');
+            toast.warning('Please enter a template name.');
             return;
         }
 
@@ -4364,7 +4472,7 @@ class PDFEditorApp {
             this.renderTemplatesList();
             this.refreshSendModal();
         } catch (e) {
-            alert('Failed to save template: ' + (e instanceof Error ? e.message : String(e)));
+            toast.error('Failed to save template: ' + (e instanceof Error ? e.message : String(e)));
         }
     }
 
@@ -4379,7 +4487,7 @@ class PDFEditorApp {
             this.renderTemplatesList();
             this.refreshSendModal();
         } catch (e) {
-            alert('Failed to delete template: ' + (e instanceof Error ? e.message : String(e)));
+            toast.error('Failed to delete template: ' + (e instanceof Error ? e.message : String(e)));
         }
     }
 
@@ -4390,7 +4498,7 @@ class PDFEditorApp {
             this.renderTemplatesList();
             this.refreshSendModal();
         } catch (e) {
-            alert('Failed to set default: ' + (e instanceof Error ? e.message : String(e)));
+            toast.error('Failed to set default: ' + (e instanceof Error ? e.message : String(e)));
         }
     }
 
@@ -4423,12 +4531,12 @@ class PDFEditorApp {
             try {
                 const text = await f.text();
                 const { imported, errors } = await emailTemplates.importJson(text, { replace });
-                if (errors.length) alert(`Import completed with issues:\n${errors.join('\n')}`);
-                else alert(`Imported ${imported} template(s).`);
+                if (errors.length) toast.warning(`Import completed with issues: ${errors.join(', ')}`);
+                else toast.success(`Imported ${imported} template(s).`);
                 this.renderTemplatesList();
                 this.refreshSendModal();
             } catch (err) {
-                alert('Import failed: ' + (err.message || 'Invalid file'));
+                toast.error('Import failed: ' + (err.message || 'Invalid file'));
             }
             importInput.value = '';
         });
@@ -4551,13 +4659,13 @@ class PDFEditorApp {
                 await setTemplateFromBytes(await file.arrayBuffer());
                 
                 if (pdfFieldNames.length === 0) {
-                    alert('No form fields found in PDF. Make sure the PDF has form fields created with the Form Text Field or Form Checkbox tools.');
+                    toast.warning('No form fields found in PDF. Make sure the PDF has form fields created with the Form Text Field or Form Checkbox tools.');
                 } else {
                     this.updateBulkFillMapping();
                 }
             } catch (error) {
                 console.error('Error loading template:', error);
-                alert('Error loading PDF template: ' + error.message);
+                toast.error('Error loading PDF template: ' + error.message);
             }
         });
 
@@ -4572,17 +4680,17 @@ class PDFEditorApp {
                     csvHeaders = Object.keys(rows[0]);
                     this.updateBulkFillMapping();
                 } else {
-                    alert('CSV file appears to be empty or invalid.');
+                    toast.warning('CSV file appears to be empty or invalid.');
                 }
             } catch (error) {
                 console.error('Error loading CSV:', error);
-                alert('Error loading CSV file: ' + error.message);
+                toast.error('Error loading CSV file: ' + error.message);
             }
         });
 
         processBtn?.addEventListener('click', async () => {
             if (!csvText) {
-                alert('Please upload a CSV file.');
+                toast.warning('Please upload a CSV file.');
                 return;
             }
 
@@ -4597,7 +4705,7 @@ class PDFEditorApp {
             }
 
             if (!templateBytes) {
-                alert('No PDF template available. Open a PDF in the editor (or upload a template in this modal).');
+                toast.warning('No PDF template available. Open a PDF in the editor (or upload a template in this modal).');
                 return;
             }
 
@@ -4638,7 +4746,7 @@ class PDFEditorApp {
                 }, 2000);
             } catch (error) {
                 console.error('Bulk fill error:', error);
-                alert('Error processing bulk fill: ' + error.message);
+                toast.error('Error processing bulk fill: ' + error.message);
                 progressDiv.classList.add('hidden');
                 processBtn.disabled = false;
                 cancelBtn.disabled = false;
@@ -4800,7 +4908,7 @@ class PDFEditorApp {
                     await doRow();
                 } catch (err) {
                     console.error('Bulk fill row download error:', err);
-                    alert('Error generating PDF: ' + err.message);
+                    toast.error('Error generating PDF: ' + err.message);
                 }
                 return;
             }
@@ -4808,7 +4916,7 @@ class PDFEditorApp {
             if (btn.classList.contains('bulk-fill-row-send')) {
                 const emails = getSendToEmailsForRow(rowData, index);
                 if (emails.length === 0) {
-                    alert('Please enter an email for this row before sending. Add an email in the row or select email column(s) above.');
+                    toast.warning('Please enter an email for this row before sending. Add an email in the row or select email column(s) above.');
                     return;
                 }
                 const missingCols = getMissingEmailColumnsForRow(rowData);
@@ -4844,7 +4952,7 @@ class PDFEditorApp {
                     markRowSentInDOM(index);
                 } catch (err) {
                     console.error('Bulk fill send email error:', err);
-                    alert('Error preparing email: ' + err.message);
+                    toast.error('Error preparing email: ' + err.message);
                 }
             }
         });
@@ -4859,7 +4967,7 @@ class PDFEditorApp {
                 .filter((i) => i >= 0);
             const missingCount = rows.length - indicesToSend.length;
             if (indicesToSend.length === 0) {
-                alert('No rows have an email. Select email column(s) and/or add an email for each row.');
+                toast.warning('No rows have an email. Select email column(s) and/or add an email for each row.');
                 return;
             }
             if (missingCount > 0) {

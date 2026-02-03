@@ -164,7 +164,17 @@ export class PDFExporter {
         outDoc.setProducer('Free PDF Editor');
         outDoc.setCreator('Free PDF Editor');
 
-        // Save and return the modified PDF
+        // Ensure form field appearances are generated for viewer compatibility
+        // This is CRITICAL - without it, form fields won't be recognized by many PDF viewers
+        try {
+            const form = outDoc.getForm();
+            if (form.getFields().length > 0) {
+                form.updateFieldAppearances(this.fonts.helvetica);
+            }
+        } catch (e) {
+            console.warn('Could not update form field appearances:', e);
+        }
+
         return await outDoc.save();
     }
 
@@ -255,8 +265,10 @@ export class PDFExporter {
                 break;
 
             case 'group':
-                // Handle grouped objects
-                if (obj._annotationType === 'textfield') {
+                // Handle grouped objects (Fabric Groups - type is 'group', _annotationType has the real type)
+                if (obj._annotationType === 'signature-field') {
+                    await this.drawSignatureField(pdfDoc, page, obj, scaleFactor, pageHeight);
+                } else if (obj._annotationType === 'textfield') {
                     await this.createFormField(pdfDoc, page, obj, scaleFactor, pageHeight, 'text');
                 } else if (obj._annotationType === 'checkbox') {
                     await this.createFormField(pdfDoc, page, obj, scaleFactor, pageHeight, 'checkbox');
@@ -468,8 +480,10 @@ export class PDFExporter {
     }
 
     /**
-     * Draw signature field (empty placeholder box with label).
-     * Also creates a read-only text form field so it appears in the sidebar when the PDF is reopened.
+     * Draw signature field as a real PDF form field (AcroForm widget).
+     * pdf-lib has no createSignature(); we use a read-only text field with sig_ prefix.
+     * We create ONLY the form field - no separate graphics - so viewers reliably detect it as fillable.
+     * Set placeholder text so users see "Label (Sign here)" until they sign.
      */
     async drawSignatureField(pdfDoc, page, obj, scaleFactor, pageHeight) {
         const { rgb } = PDFLib;
@@ -480,58 +494,40 @@ export class PDFExporter {
         const top = pageHeight - bounds.top * scaleFactor - height;
         const label = (obj._signatureFieldLabel || 'Signature').trim();
 
-        // Draw dashed rectangle border
-        page.drawRectangle({
-            x: left,
-            y: top,
-            width: width,
-            height: height,
-            borderColor: rgb(0.6, 0.6, 0.6),
-            borderWidth: 1.5,
-            borderDashArray: [3, 3],
-            color: rgb(1, 1, 0.9),
-            opacity: 0.3
-        });
-
-        // Draw label text (two lines, centered) - use font and proper line spacing
-        const fontSize = Math.min(12, height / 4);
-        const font = this.fonts.helvetica;
-        const lineHeight = fontSize * 1.2;
-        const lines = [label || 'Signature', '(Sign here)'];
-        const totalTextHeight = lines.length * lineHeight - (lineHeight - fontSize);
-        let y = top + (height - totalTextHeight) / 2 + fontSize;
-
-        for (const line of lines) {
-            const lineWidth = line.length * fontSize * 0.55; // Approximate width for Helvetica
-            const x = left + (width - lineWidth) / 2;
-            page.drawText(line, {
-                x,
-                y,
-                size: fontSize,
-                font,
-                color: rgb(0.4, 0.4, 0.4)
-            });
-            y -= lineHeight;
-        }
-
-        // Create a read-only text form field so it appears in form field lists when PDF is reopened.
-        // pdf-lib has no createSignature(); using a text field with sig_ prefix for our metadata.
         const baseName = (label || 'Signature').replace(/[^a-zA-Z0-9_-]/g, '_') || 'Signature';
         const fieldName = `sig_${baseName}_${Math.round(left)}_${Math.round(top)}`;
+        const placeholderText = `${label || 'Signature'}\n(Sign here)`;
+
         try {
-            const textField = pdfDoc.form.createTextField(fieldName);
+            const form = pdfDoc.getForm();
+            const textField = form.createTextField(fieldName);
             textField.enableReadOnly();
+            textField.enableMultiline();
+            textField.setText(placeholderText);
             textField.addToPage(page, {
                 x: left,
                 y: top,
                 width: width,
                 height: height,
-                borderWidth: 0,
-                backgroundColor: rgb(1, 1, 1),
-                borderColor: rgb(1, 1, 1)
+                borderWidth: 1.5,
+                backgroundColor: rgb(1, 1, 0.95),
+                borderColor: rgb(0.6, 0.6, 0.6),
+                textColor: rgb(0.4, 0.4, 0.4)
             });
         } catch (e) {
-            console.warn('Could not create signature form field, using visual only:', e);
+            console.warn('Could not create signature form field:', e);
+            // Fallback: draw graphics only (no form field)
+            page.drawRectangle({
+                x: left, y: top, width, height,
+                borderColor: rgb(0.6, 0.6, 0.6), borderWidth: 1.5, borderDashArray: [3, 3],
+                color: rgb(1, 1, 0.9), opacity: 0.3
+            });
+            const fontSize = Math.min(12, height / 4);
+            const font = this.fonts.helvetica;
+            let y = top + height / 2 - fontSize;
+            page.drawText(placeholderText.replace('\n', ' - '), {
+                x: left + 4, y, size: fontSize, font, color: rgb(0.4, 0.4, 0.4)
+            });
         }
     }
 
