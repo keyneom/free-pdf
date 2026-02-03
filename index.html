@@ -16,8 +16,10 @@
     <!-- QR code: generate + scan for vault transfer -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js"></script>
-    <!-- p2pago ZKP2P Donate SDK -->
-    <script src="https://unpkg.com/@p2pago/zkp2p-donate/dist/umd/zkp2p-donate.js"></script>
+    <!-- ethers v5 (required by p2pago SDK) -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/ethers/5.7.2/ethers.umd.min.js"></script>
+    <!-- p2pago ZKP2P Donate SDK (local build from ../p2pago) -->
+    <script src="js/vendor/zkp2p-donate.js"></script>
 </head>
 <body>
     <div id="app">
@@ -853,10 +855,10 @@
                     </div>
                     <div class="support-prompt-options">
                         <button type="button" class="btn btn-primary support-pay-btn" data-mode="time" id="support-pay-time">
-                            Pay to use for <span id="support-time-label">1 week</span>
+                            Pay to use for<span id="support-time-label"> 1 week</span>
                         </button>
                         <button type="button" class="btn btn-primary support-pay-btn" data-mode="uses" id="support-pay-uses">
-                            Pay to use for <span id="support-uses-label">5</span> document exports
+                            Pay to use for<span id="support-uses-label"> 5 </span>document exports
                         </button>
                     </div>
                     <p class="support-prompt-skip">

@@ -4289,8 +4289,8 @@ class PDFEditorApp {
 
         const updateLabels = () => {
             const amt = Math.max(0.5, parseFloat(amountInput?.value || '1') || 1);
-            if (timeLabel) timeLabel.textContent = formatDuration(getDurationDaysForAmount(amt));
-            if (usesLabel) usesLabel.textContent = String(getUsesForAmount(amt));
+            if (timeLabel) timeLabel.textContent = ' ' + formatDuration(getDurationDaysForAmount(amt));
+            if (usesLabel) usesLabel.textContent = ' ' + String(getUsesForAmount(amt)) + ' ';
         };
 
         amountInput?.addEventListener('input', updateLabels);
@@ -4328,8 +4328,8 @@ class PDFEditorApp {
         if (amountInput) amountInput.value = '1';
         const timeLabel = document.getElementById('support-time-label');
         const usesLabel = document.getElementById('support-uses-label');
-        if (timeLabel) timeLabel.textContent = formatDuration(getDurationDaysForAmount(1));
-        if (usesLabel) usesLabel.textContent = String(getUsesForAmount(1));
+        if (timeLabel) timeLabel.textContent = ' ' + formatDuration(getDurationDaysForAmount(1));
+        if (usesLabel) usesLabel.textContent = ' ' + String(getUsesForAmount(1)) + ' ';
         this.supportPromptModal?.classList.remove('hidden');
     }
 
